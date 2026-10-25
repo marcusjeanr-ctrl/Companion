@@ -17,11 +17,16 @@ async function main() {
     const atlas = rt.ctx.atlasFor('test', ['Central Continent', 'Asura Kingdom', 'Fittoa Region', 'House King Estate', 'Training Yard']);
     const nodes = [...atlas.nodes.values()];
     const find = name => nodes.find(node => rt.ctx.atlasNorm(node.name) === rt.ctx.atlasNorm(name));
-    for (const name of ['Central Continent', 'Asura Kingdom', 'Fittoa Region', 'Ars', 'Buena Village', 'Rikarisu', 'Begaritt Continent', 'Ranoa Magic Academy']) assert(find(name), 'Missing ' + name);
+    for (const name of ['Central Continent', 'Asura Kingdom', 'Fittoa Region', 'Ars', 'Buena Village', 'Rikarisu', 'Begaritt Continent', 'Ranoa Magic Academy', 'Zant Port', 'West Port', 'East Port', 'Heaven Continent Skyport']) assert(find(name), 'Missing ' + name);
     assert.equal(atlas.nodes.get(find('Asura Kingdom').parent).name, 'Central Continent');
     assert.equal(atlas.nodes.get(find('Ars').parent).name, 'Asura Kingdom');
     assert.equal(atlas.nodes.get(find('Buena Village').parent).name, 'Fittoa Region');
     assert.equal(nodes.filter(node => node.name === 'Asura Kingdom').length, 1);
+    assert(!find('Continental Ports'));
+    assert(!find('East Port and West Port'));
+    assert.equal(atlas.nodes.get(find('Zant Port').parent).name, 'Demon Continent');
+    assert.equal(atlas.nodes.get(find('West Port').parent).name, 'Millis Continent');
+    assert.equal(atlas.nodes.get(find('East Port').parent).name, 'Millis Continent');
     assert.equal(find('Ars').kind, 'Lorebook reference');
     assert(find('Asura Kingdom').summary, 'Location description missing');
     for (const name of ['Dungeon Masters Guild', 'Great Forest Guild', 'Zant Port Smuggling Ring', 'Chaos Breaker Servants', 'Begaritt Desert Sandstorms']) assert(!find(name), 'Non-location mapped: ' + name);

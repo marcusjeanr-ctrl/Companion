@@ -2297,7 +2297,7 @@ async function pushState(chatId, snapshot = null) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.14-rc.1';
+const RPGC_VERSION = '2.8.15-rc.1';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -3927,11 +3927,32 @@ function atlasMushokuTemporalEntries(entries, phase) {
     });
 }
 
+function atlasMushokuPlaceEntries(entries) {
+    return (entries || []).flatMap(entry => {
+        const text = String(entry.content || '');
+        if (/^East Port and West Port:/i.test(text)) {
+            return ['East Port', 'West Port'].map(name => ({ ...entry, key: [name], keys: [name],
+                content: `${name}: A harbor city on the Millis Continent. ${name === 'East Port' ? 'Connects to the Demon Continent (Zant Port).' : 'Facilitates trade with the Central Continent.'}` }));
+        }
+        if (!/^Continental Ports:/i.test(text)) return [entry];
+        const first = String(entry.content).split(/\.\s+/)[0];
+        const ports = new Map();
+        for (const match of first.matchAll(/([\p{L}'’-]+(?:\s+[\p{L}'’-]+){0,2}\s+Port)\s*\(([^)]+Continent)\)/gu)) {
+            const name = match[1].replace(/^Continental Ports:\s*/i, '').replace(/^connects to\s+/i, '').trim();
+            ports.set(name, `A port on the ${match[2]}. ${name} is named in the lorebook's continental port connection.`);
+        }
+        for (const name of entry.key || entry.keys || []) if (/^[\p{L}'’-]+\s+Port$/u.test(name) && !ports.has(name)) {
+            ports.set(name, 'A port listed in the lorebook keywords. Its continent and detailed location are not stated in this entry.');
+        }
+        return [...ports].map(([name, description]) => ({ ...entry, key: [name], keys: [name], content: `${name}: ${description}` }));
+    });
+}
+
 function atlasMushokuReferences(entries) {
     const places = new Map();
     const title = value => String(value).replace(/^the\s+|^city of\s+/i, '').replace(/\s+city$/i, '').trim();
-    const placeType = /\b(?:continent|kingdom|nation|province|region|territory|territories|city|town|village|settlement|capital|port|forest|mountain|range|valley|desert|glacier|summit|crater|road|highway|labyrinth|dungeon|oasis|palace|castle|fortress|estate|campus|university|academy|cathedral|district|suburbs|structure|dock|sanctuary|wasteland)\b/i;
-    for (const entry of entries || []) {
+    const placeType = /\b(?:access point|skyport|continent|kingdom|nation|province|region|territory|territories|city|town|village|settlement|capital|port|forest|mountain|range|valley|desert|glacier|summit|crater|road|highway|labyrinth|dungeon|oasis|palace|castle|fortress|estate|campus|university|academy|cathedral|district|suburbs|structure|dock|sanctuary|wasteland)\b/i;
+    for (const entry of atlasMushokuPlaceEntries(entries)) {
         if (entry.disabled === true || entry.enabled === false || !/Geography|Locations|Landmarks|Nations/i.test(entry.category || entry.extensions?.category || '')) continue;
         const match = String(entry.content || '').match(/^\s*([^:\n\[\]]{2,80}):\s*([^\n]+)/);
         if (!match) continue;
@@ -14493,8 +14514,9 @@ function hmsMagicPanel(chat, st, cfg, sys, chatId = null) {
     const meters = sys.meters.filter(m => /\b(od|mana|magic|corruption|integrity)\b/i.test(m.label));
     const arts = sys.abilities.filter(g => /magic|tradition|spell/i.test(g.category));
     const cooldowns = (sys._lines || []).filter(l => /cooldown|recharg/i.test(l.text)).map(l => l.text.trim()).slice(0, 4);
-    const saved = new Map((Array.isArray(st && st.spellbook) ? st.spellbook : []).map(x => [spellKey(x.name), x]));
-    const book = [...spellKnown(chat, st)].map(([key, value]) => saved.get(key) || { name: value.name, from: value.from }).slice(-60);
+    const resolve = spellResolver(chatId);
+    const saved = new Map(spellResolveState(chatId, st, spellStoryFold(chat)).st.spellbook.map(x => { const target = resolve(x.name); return [target.key, { ...x, name: target.name }]; }));
+    const book = [...spellKnown(chat, st, null, chatId)].map(([key, value]) => saved.get(key) || { name: value.name, from: value.from }).slice(-60);
     if (!pools.length && !meters.length && !arts.length && !cooldowns.length && !book.length && !list && !ranked) return null;
     return { pools, meters, arts, cooldowns, spellbook: book, list };
 }
@@ -14585,7 +14607,7 @@ function spellsFromEntry(e, out) {
         const rankRaw = sr && sr[2] ? sr[2].trim() : '';
         const eff = text.match(/^Effect:\s*(.+)$/im), ch = text.match(/^(?:Chant|Incantation):\s*(.+)$/im);
         const row = { name, school: 'Other', parent: null, ladder: 'mt', step: spellMtStep(rankRaw), rank: rankRaw && !/^(not stated|unknown|[—–-]|melded)$/i.test(rankRaw) ? rankRaw.replace(/\s*\(.*$/, '') : null,
-            kind: 'ranked', who: null, needs: [], effect: eff ? spellClip(eff[1], 240) : null, chant: ch ? spellClip(ch[1].replace(/^["“]|["”]$/g, ''), 200) : null, fan, src: e.id };
+            aliases: Array.isArray(e.key) ? e.key : [], kind: 'ranked', who: null, needs: [], effect: eff ? spellClip(eff[1], 240) : null, chant: ch ? spellClip(ch[1].replace(/^["“]|["”]$/g, ''), 200) : null, fan, src: e.id };
         const p = raw.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
         const base = p ? p[1].trim() : raw;
         if (/^melded$/i.test(base)) { row.school = 'Melded'; row.kind = 'melded'; row.needs = p ? p[2].split(/\s*\+\s*/).map(x => x.trim()).filter(Boolean) : []; row.step = null; }
@@ -14663,12 +14685,18 @@ function spellCatalog(chatId) {
             if (nm) rows.push({ name: nm, school: spellSchoolName(school), parent: null, ladder: 'mt', step: r.step, rank: SPELL_LADDER.mt[r.step] || r.rank, kind: 'ranked', who: null, needs: [], effect: null, chant: null, fan: false, src: null });
         }
     } catch { /* optional */ }
+    const dedicated = new Map();
+    for (const row of rows) if (Array.isArray(row.aliases)) dedicated.set(spellKey(row.name).replace(/\s/g, ''), row);
     const seen = new Map();
-    for (const r of rows) {
+    for (const source of rows) {
+        const explicit = dedicated.get(spellKey(source.name).replace(/\s/g, ''));
+        const same = explicit && (spellKey(source.name) === spellKey(explicit.name) || explicit.aliases.some(name => spellKey(name) === spellKey(source.name)));
+        const r = same ? { ...source, name: explicit.name, aliases: [...(source.aliases || []), source.name, ...explicit.aliases] } : source;
         const k = spellKey(r.name);
         if (!k || k.length < 2) continue;
         const had = seen.get(k);
         if (!had) { seen.set(k, { ...r, key: k }); continue; }
+        had.aliases = [...new Set([...(had.aliases || []), ...(r.aliases || [])])];
         // the first description wins; a later one only fills what it lacked
         for (const f of ['effect', 'chant', 'rank', 'who']) if (!had[f] && r[f]) had[f] = r[f];
         if (had.step === null && r.step !== null && had.kind !== 'unique' && had.kind !== 'rare' && had.kind !== 'melded') { had.step = r.step; had.kind = 'ranked'; }
@@ -14712,6 +14740,62 @@ function spellStanding(lines) {
 function spellStoryFold(chat) {
     return memoRead(chat, 'spells', () => spellStoryFoldUncached(chat));
 }
+const spellAliasIndexes = new WeakMap();
+function spellResolver(chatId) {
+    const catalog = chatId ? spellCatalog(chatId) : [];
+    let index = spellAliasIndexes.get(catalog);
+    if (!index) {
+        index = new Map(catalog.map(row => [row.key, row]));
+        const proposals = new Map();
+        for (const row of catalog) for (const name of row.aliases || []) {
+            const key = spellKey(name);
+            if (!key || index.has(key) || /\b(?:variation|variant|school)\b/i.test(key) || /\bmagic$/i.test(String(name))) continue;
+            if (catalog.some(other => other.key !== row.key && (` ${key} `).includes(` ${other.key} `))) continue;
+            if (!proposals.has(key)) proposals.set(key, row);
+            else if (proposals.get(key) !== row) proposals.set(key, null);
+        }
+        for (const [key, row] of proposals) if (row) index.set(key, row);
+        spellAliasIndexes.set(catalog, index);
+    }
+    return name => {
+        const key = spellKey(name), row = index.get(key);
+        return row ? { key: row.key, name: row.name } : { key, name: String(name || '').trim() };
+    };
+}
+function spellResolveState(chatId, st, fold) {
+    const resolve = spellResolver(chatId);
+    const events = source => {
+        const out = new Map();
+        for (const [key, event] of source) {
+            const target = resolve(event.name || key), previous = out.get(target.key);
+            if (!previous || event.at >= previous.at) out.set(target.key, { ...event, name: target.name });
+        }
+        return out;
+    };
+    const anchors = source => {
+        const out = {};
+        for (const [key, id] of Object.entries(isPlainObject(source) ? source : {})) {
+            const target = resolve(key).key;
+            const at = id ? (fold.order.get(id) ?? Infinity) : -1;
+            const previous = out[target] ? (fold.order.get(out[target]) ?? Infinity) : -1;
+            if (!(target in out) || at >= previous) out[target] = id;
+        }
+        return out;
+    };
+    const rows = source => {
+        const out = new Map();
+        for (const row of Array.isArray(source) ? source : []) if (row?.name) {
+            const target = resolve(row.name), previous = out.get(target.key);
+            out.set(target.key, { ...previous, ...row, name: target.name,
+                ...(previous?.from === 'you' ? { from: 'you' } : {}) });
+        }
+        return [...out.values()];
+    };
+    return { st: { ...st, spellbook: rows(st?.spellbook), spellStudy: rows(st?.spellStudy),
+        spellForget: anchors(st?.spellForget), spellStudyStopped: anchors(st?.spellStudyStopped) },
+        fold: { ...fold, learned: events(fold.learned), mastered: events(fold.mastered), progress: events(fold.progress) } };
+}
+
 function spellStoryFoldUncached(chat) {
     const learned = new Map(), mastered = new Map(), progress = new Map(), order = new Map();
     let i = 0;
@@ -14733,8 +14817,9 @@ function spellStoryFoldUncached(chat) {
 function spellSame(a, b) { return a === b; }
 
 /** The names the player knows: the spellbook, and what the story said they learned since they last cleared it. */
-function spellKnown(chat, st, fold) {
-    const f = fold || spellStoryFold(chat);
+function spellKnown(chat, st, fold, chatId = null) {
+    const resolved = spellResolveState(chatId || chatIdOf(chat), st, fold || spellStoryFold(chat));
+    const f = resolved.fold; st = resolved.st;
     const forget = isPlainObject(st && st.spellForget) ? st.spellForget : {};
     const allowed = (key, event) => {
         if (!(key in forget)) return true;
@@ -14755,8 +14840,9 @@ function spellKnown(chat, st, fold) {
 }
 
 /** Manual study choices and practice the story reported, rebuilt from the active swipes. */
-function spellStudyActive(chat, st, fold = null) {
-    const f = fold || spellStoryFold(chat);
+function spellStudyActive(chat, st, fold = null, chatId = null) {
+    const resolved = spellResolveState(chatId || chatIdOf(chat), st, fold || spellStoryFold(chat));
+    const f = resolved.fold; st = resolved.st;
     const active = new Map();
     for (const s of Array.isArray(st && st.spellStudy) ? st.spellStudy : []) if (s && s.name) active.set(spellKey(s.name), s);
     const stopped = isPlainObject(st && st.spellStudyStopped) ? st.spellStudyStopped : {};
@@ -14781,11 +14867,12 @@ function spellListPanel(chatId, chat, st, sys) {
         return null;
     }
     const stand = spellStanding(sys && sys._lines ? sys._lines : []);
-    const fold = spellStoryFold(chat);
-    const known = spellKnown(chat, st, fold);
+    const resolved = spellResolveState(chatId, st, spellStoryFold(chat));
+    const fold = resolved.fold; st = resolved.st;
+    const known = spellKnown(chat, st, fold, chatId);
     const knownKeys = [...known.keys()];
     const isKnown = (k) => known.has(k) || knownKeys.some(x => spellSame(x, k));
-    const study = spellStudyActive(chat, st, fold);
+    const study = spellStudyActive(chat, st, fold, chatId);
     const studyKeys = new Set(study.map(s => spellKey(s.name)));
     const ladderOf = (r) => SPELL_LADDER[r.ladder] || SPELL_LADDER.mt;
     const needs = (r) => (r.ladder === 'rz' ? `Needs ${SPELL_LADDER.rz[r.step]} tier (Gate ${['F', 'D', 'C', 'B', 'S'][r.step]} or better)` : `Needs ${ladderOf(r)[r.step]}`);
@@ -14852,10 +14939,11 @@ function spellListPanel(chatId, chat, st, sys) {
 
 /** The spells being studied, as the reminder the model sees before it writes. Null when there are none. */
 function spellStudyReminder(chatId, chat, st, userName) {
-    const fold = spellStoryFold(chat);
-    const study = spellStudyActive(chat, st, fold);
+    const resolved = spellResolveState(chatId, st, spellStoryFold(chat));
+    const fold = resolved.fold; st = resolved.st;
+    const study = spellStudyActive(chat, st, fold, chatId);
     if (!study.length) return null;
-    const known = spellKnown(chat, st, fold);
+    const known = spellKnown(chat, st, fold, chatId);
     const kk = [...known.keys()];
     const cat = spellCatalog(chatId);
     const rows = [];
@@ -15617,13 +15705,14 @@ spindle.onFrontendMessage(async (payload, userId) => {
 
             case 'spell_study': {
                 if (!payload.chatId || typeof payload.name !== 'string' || !payload.name.trim()) return;
-                const st = await getChatState(payload.chatId);
-                const name = payload.name.trim().slice(0, 60), k = spellKey(name);
+                const chat = await chatApi.getMessages(payload.chatId).catch(() => []);
+                const st = spellResolveState(payload.chatId, await getChatState(payload.chatId), spellStoryFold(chat)).st;
+                const target = spellResolver(payload.chatId)(payload.name.trim().slice(0, 60));
+                const name = target.name, k = target.key;
                 const list = (Array.isArray(st.spellStudy) ? st.spellStudy : []).filter(x => x && spellKey(x.name) !== k);
                 if (!isPlainObject(st.spellStudyStopped)) st.spellStudyStopped = {};
                 if (payload.on) delete st.spellStudyStopped[k];
                 else {
-                    const chat = await chatApi.getMessages(payload.chatId).catch(() => []);
                     const last = [...(chat || [])].reverse().find(m => m.role === 'assistant');
                     st.spellStudyStopped[k] = last ? last.id : null;
                 }
@@ -15637,8 +15726,10 @@ spindle.onFrontendMessage(async (payload, userId) => {
             case 'spell_known': {
                 // Marked by hand: learned (into the spellbook) or forgotten (out of it, and the story's earlier word on it with it).
                 if (!payload.chatId || typeof payload.name !== 'string' || !payload.name.trim()) return;
-                const st = await getChatState(payload.chatId);
-                const name = payload.name.trim().slice(0, 60), k = spellKey(name);
+                const chat = await chatApi.getMessages(payload.chatId).catch(() => []);
+                const st = spellResolveState(payload.chatId, await getChatState(payload.chatId), spellStoryFold(chat)).st;
+                const target = spellResolver(payload.chatId)(payload.name.trim().slice(0, 60));
+                const name = target.name, k = target.key;
                 if (!isPlainObject(st.spellForget)) st.spellForget = {};
                 if (payload.on) {
                     spellbookAdd(st, [{ name }], 'you');
@@ -15647,7 +15738,6 @@ spindle.onFrontendMessage(async (payload, userId) => {
                     if (isPlainObject(st.spellStudyStopped)) delete st.spellStudyStopped[k];
                 } else {
                     st.spellbook = (Array.isArray(st.spellbook) ? st.spellbook : []).filter(x => spellKey(x.name) !== k);
-                    const chat = await chatApi.getMessages(payload.chatId).catch(() => []);
                     const last = [...(chat || [])].reverse().find(m => m.role === 'assistant');
                     st.spellForget[k] = last ? last.id : null;
                     const ks = Object.keys(st.spellForget);

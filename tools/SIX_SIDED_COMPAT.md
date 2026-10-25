@@ -1,4 +1,4 @@
-# Mushoku compatibility in HMS 2.8.14 candidate
+# Mushoku compatibility in HMS 2.8.15 candidate
 
 Install the extension ZIP in Lumiverse. The original cards remain readable. A separate Six_Sided_World_HMS_Compatible.json copy resolves conflicting generic-HUD and output-order instructions in the supplied Six-Sided card; its lorebook is unchanged. Living World, the start handler and Reporter preset are unchanged. HMS reads the active chat's WORLD STATE HUD and the attached lorebook; it does not have an independent authoritative world state.
 
@@ -63,3 +63,9 @@ Atlas uses the complete reference catalog for Mushoku, rather than the activated
 ## 2.8.14 Calamity timeline filtering
 
 The supplied card mixes intact locations with post-Calamity variants. Atlas now filters the three explicit Calamity ruin entries and future destruction sentences using the current HUD and active-swipe event ledger. K417 Month 2/countdowns keep the intact references; a later date alone does not activate ruins. An occurred report or an explicit completed event in the HUD establishes the aftermath. Prevented or changed events do not force canonical destruction. The frontend version changes with the outcome and history cannot repopulate incompatible settlement states. This targets the supplied Calamity variants; it is not a general semantic timeline interpreter for every historical sentence in arbitrary lorebooks.
+
+## 2.8.15 aliases and ports
+
+Dedicated spell-entry keywords can supply alternate names when they uniquely identify one spell. General school/magic/variation keywords and ambiguous aliases do not grant catalog spells; canonical names remain authoritative. Existing saved alias names are resolved for display and controls without rewriting message reports. Explicit formatting duplicates are merged, giving 111 catalog names from the supplied book's 81 dedicated spell entries plus other definitions/indexes. Run `node tools/test_spell_aliases.cjs` for study, progress, mastery, manual controls, forgetting, relearning, swipe reversal and world isolation.
+
+Atlas splits the supplied grouped port entries into East Port, West Port and Zant Port, using their explicitly stated continents. Heaven Continent Skyport is read as an access point. None of these references establish player visits or knowledge. The prior Calamity filters remain in effect.

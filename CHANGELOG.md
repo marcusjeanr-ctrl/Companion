@@ -1,3 +1,11 @@
+## 2.8.15 — canonical spell aliases and individual port references
+
+- Resolve unambiguous alternate names from dedicated spell entries to canonical catalog names for Known, Mastered, Studying, progress, forget/relearn, study reminders and manual controls. Keep ambiguous/category/variation keywords unresolved and preserve distinct longer spell names.
+- Read old saved names through the resolver without rewriting message history. Preserve active-swipe provenance, chronology, manual grants and the original tracker transport.
+- Merge explicit formatting-only duplicate names, including Flashover/Flash Over. The supplied card retains 81 dedicated spell entries and produces 111 distinct catalog names (previously 112 with that duplicate).
+- Split East Port, West Port and Zant Port out of grouped geography entries; expose Heaven Continent Skyport. Use explicit continent associations, leaving an unsupported parent unassigned. Keep Calamity timeline filtering.
+- Add alias lifecycle/control/isolation tests and port/skyport coverage. All eight suites pass.
+
 ## 2.8.14 — prevent premature Calamity ruins in Atlas
 
 - Pass the current HUD and active-swipe canon-event ledger into Atlas. Hide Roa Ruins, Buena Village Ruins and Fittoa Crater until the Calamity is established as having occurred; dates alone never establish it. Preserve prevented/changed outcomes.

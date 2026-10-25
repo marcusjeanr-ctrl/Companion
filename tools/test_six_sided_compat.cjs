@@ -59,6 +59,7 @@ const code = [
  'const SPELL_LADDER = {mt:["Beginner","Intermediate","Advanced"]};',
  'const spellRows = [{name:"Earth Wall",key:"earth wall",school:"Earth",parent:null,ladder:"mt",step:null,rank:null,kind:"normal",effect:"An earthen wall.",chant:null,fan:false},{name:"Earth Spear",key:"earth spear",school:"Earth",parent:null,ladder:"mt",step:1,rank:"Intermediate",kind:"normal",effect:null,chant:null,fan:false}];',
  'function spellCatalog() { return spellRows; }',
+ 'function chatIdOf() { return null; }',
  'function loreQueueCatalog() {}',
  'const entries = [];',
  'function hmsClockTest(h) { return hmsClock(h); }',
