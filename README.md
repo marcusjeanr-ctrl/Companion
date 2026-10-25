@@ -1,4 +1,4 @@
-> Six-Sided World compatibility fork of [RPG Companion HMS](https://github.com/TenderTriper/rpg-companion-hms). Version 2.8.10 compatibility candidate. The Reporter preset and other world features come from the upstream package. See [compatibility notes](tools/SIX_SIDED_COMPAT.md) for scope and live validation limits.
+> Six-Sided World compatibility fork of [RPG Companion HMS](https://github.com/TenderTriper/rpg-companion-hms). Version 2.8.11 compatibility candidate. The Reporter preset and other world features come from the upstream package. See [compatibility notes](tools/SIX_SIDED_COMPAT.md) for scope and live validation limits.
 
 # RPG Companion HMS Edition 2.8 beta
 

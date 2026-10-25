@@ -2296,7 +2296,7 @@ async function pushState(chatId, snapshot = null) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.10-rc.1';
+const RPGC_VERSION = '2.8.11-rc.1';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -9121,7 +9121,7 @@ function mtSaga(chatId, year, arcLine, date = null) {
     const part = am ? am[2] || am[3] || null : reference?.part || null;
     return { year, month, day: date?.day || null, monthName: date?.monthName || null,
         personalArc: participation === 'personal' ? text : null, participation, canonMode: null,
-        from: Math.min(arcs[0].year, year), to: Math.max(arcs[arcs.length - 1].year, year), current: cur?.no || null,
+        from: Math.min(arcs[0].year, year), to: Math.max(arcs[arcs.length - 1].year, year), arcs, current: cur?.no || null,
         part, partName: am?.[4]?.trim() || null,
         next: next ? { no: next.no, title: next.title, year: next.year, inYears: next.year - year,
             ...(month && next.month ? { inMonths: next.year * 12 + next.month - 1 - mark } : {}) } : null };

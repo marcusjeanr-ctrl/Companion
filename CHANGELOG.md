@@ -1,3 +1,10 @@
+## 2.8.11 hotfix — restore populated panel loading
+
+- Restore the Saga `arcs` array omitted by 2.8.10. The frontend requires it to render the world timeline; its absence threw during the populated panel render.
+- Guard incomplete Saga payloads so a missing arc list cannot prevent the remaining panels from rendering.
+- Add a full startup and frontend-render regression using actual backend state for both Mushoku HUDs. Verify all 22 arcs, the Magic panel, incomplete-payload recovery and cleanup.
+- Preserve the 2.8.10 tracking repairs and original 2.8.1 request/refresh flow.
+
 ## 2.8.10 compatibility candidate — audited Six-Sided tracking repairs
 
 - Parse numbered and named Armored Dragon dates through one calendar; fix month/year rollover, yearless deadlines and birthday birth fields.

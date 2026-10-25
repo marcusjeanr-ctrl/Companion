@@ -1,4 +1,4 @@
-# Mushoku compatibility in HMS 2.8.10 candidate
+# Mushoku compatibility in HMS 2.8.11 candidate
 
 Install the extension ZIP in Lumiverse. The original cards remain readable. A separate Six_Sided_World_HMS_Compatible.json copy resolves conflicting generic-HUD and output-order instructions in the supplied Six-Sided card; its lorebook is unchanged. Living World, the start handler and Reporter preset are unchanged. HMS reads the active chat's WORLD STATE HUD and the attached lorebook; it does not have an independent authoritative world state.
 
@@ -51,3 +51,7 @@ This fixes demonstrated code paths; a successful local test does not guarantee t
 Automatic story/fight spell caches from older releases no longer grant Known by themselves. Active-swipe learning/mastery reports establish those spells; manually granted spells remain. A discarded swipe therefore cannot leave a permanent automatic grant. Forget also suppresses older mastery, while later learning or mastery restores the spell. No chat restart is needed.
 
 Run all five suites: `test_six_sided_compat.cjs`, `test_panel_tracking.cjs`, `test_2_8_1_panel_parity.cjs`, `test_reading_and_magic.cjs`, and `test_six_sided_repairs.cjs` under `tools/`. The repair suite uses the supplied card's exact canon-clock entry. Original demo-panel parity allows only the intended Mushoku calendar and observed-Atlas corrections. These deterministic tests verify data handling, not perfect interpretation of every live model response or a total-refresh speed percentage.
+
+## 2.8.11 startup hotfix
+
+2.8.10 omitted the Saga arc list and could crash the populated panel render. 2.8.11 restores that payload field and guards the renderer against an incomplete list. Run `node tools/test_startup_and_render.cjs` in addition to the five data suites. This executes backend startup and frontend setup/render with actual backend payloads using a minimal DOM test harness; it covers both Mushoku HUDs and recovery from a missing arc list.
