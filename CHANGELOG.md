@@ -1,3 +1,12 @@
+## 2.8.18 — Updated Six-Sided World compatibility
+
+- Read the unchanged updated card’s Classic and Visual WORLD STATE formats, including globe headers, icons, bold labels/locations, middot field separators, decorative dividers and indented checkpoints. Preserve original message text, selected style and Visual pin/repair formatting.
+- Normalize whitelisted plain/bracketed/Visual curses, blessings, Demon Eyes and Soul Tether into the existing ability display. Preserve literal details and explicit partners, deduplicate equivalent modifiers, and leave arbitrary bracketed text unclassified.
+- Extract qualified Chant/Incantation labels and retain complete chants, with LN qualifiers/citations separate. Preserve spell identity, aliases, unknown ranks, fan/unique/melded classifications and progression. Clarify that Within reach is a rank/component hint, not proof of every prerequisite.
+- Scope ordinary gameplay, OOC help, Save and Continue instructions on assembled prompts. Scope direct quiet calls as auxiliary calculations/help/summaries with their existing output schema. Deduplicate purpose instructions and preserve Reporter/Minds slots. No new corrective calls or mandatory evidence fields.
+- Treat Mushoku_Save / [SAVE GAME] as read-only utilities and preserve the previous gameplay HUD. Ignore fenced/quoted HUD examples. Select the current HUD before Save Notes/recent-message history when resuming. Treat the first Continue response as restoration, without replaying transactional tracker deltas or importing hidden metadata/Cortex.
+- Validate against all 1,296 updated entries: 81 dedicated spells, 111 catalog identities, 25 chants (including three qualified labels), 57 Atlas reference nodes and 22 arcs. Keep the full actual-entry regression fixture compressed in tools. All prior stability suites remain required. See tools/UPDATED_SIX_SIDED_2_8_18.md for scope, tests and live limits.
+
 ## 2.8.17 — Universal Stability & Tracking Integrity
 
 - Apply shared-engine fixes across supported worlds and classic mode; preserve the existing architecture, extension identifier, v2 saves, modules, permissions, preset and tracker transport.

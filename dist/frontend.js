@@ -1125,7 +1125,7 @@ export function setup(ctx) {
         id: 'rpg-companion-hms',
         title: 'RPG Companion (HMS)',
         shortName: 'RPG',
-        headerTitle: 'RPG Companion HMS Edition 2.8.17 — Stability & Tracking Integrity',
+        headerTitle: 'RPG Companion HMS Edition 2.8.18 — Updated Six-Sided World Compatibility',
         description: 'The side panel for HMS bots: the HUD as cards, people, quests, the map, fights, the Chronicle, and a guide',
         keywords: ['rpg', 'hms', 'tracker', 'hud', 'quests', 'dice', 'guide'],
         iconSvg: ICON_SVG
@@ -6064,6 +6064,7 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
         const study = (sp, on) => send({ type: 'spell_study', chatId: state.chatId, name: sp.name, school: sp.school || null, rank: sp.rank || null, on });
         const known = (sp, on) => send({ type: 'spell_known', chatId: state.chatId, name: sp.name, on });
         const out = [h('h4', null, TT('Spell list ({0} in the lorebook)', L.total))];
+        if (L.eligibilityNote) out.push(h('p', {class:'rpgc-note'}, L.eligibilityNote));
         const tags = [];
         for (const sc of L.mine || []) tags.push(h('span', { class: 'rpgc-chip abil' }, raw(sc.name), sc.rank ? h('span', { class: 'lv' }, raw(' \u00B7 ' + rankLabel(sc.rank))) : null));
         if (L.voiceless) tags.push(h('span', { class: 'rpgc-chip rpgc-spell-tag', title: L.casting || null }, '\uD83E\uDD2B Voiceless casting'));
@@ -6107,9 +6108,10 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
                                         : h('button', { class: 'rpgc-mini', title: 'Study it: the story is reminded, and reports how it goes', onclick: () => study(sp, true) }, '\uD83D\uDCD6'),
                                     h('button', { class: 'rpgc-mini', title: 'Mark it learned', onclick: () => known(sp, true) }, '\u2713')])),
                         sp.why && !['known', 'mastered'].includes(sp.status) ? h('p', { class: 'rpgc-note why' }, rankLabel(sp.why)) : null,
-                        sp.fan && !['known', 'mastered'].includes(sp.status) ? h('p', { class: 'rpgc-note why' }, 'Not canon: very rare') : null,
+                        sp.fan ? h('p', { class: 'rpgc-note why' }, 'Not canon: very rare') : null,
                         sp.effect ? h('p', { class: 'eff' }, raw(sp.effect)) : null,
                         sp.chant ? h('p', { class: 'chant' }, '\u201C', raw(sp.chant), '\u201D', L.voiceless ? h('span', { class: 'rpgc-note' }, ' (', 'you can skip it', ')') : null) : null,
+                        sp.chantSource ? h('p', {class:'rpgc-note'}, raw(sp.chantSource)) : null,
                         sp.progress !== null && sp.progress !== undefined ? levelBar(sp.progress, 'ok') : null);
                     return row;
                 }));
@@ -6247,7 +6249,7 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
             if (!popWin || popWin.closed) {
                 popWin = window.open('', 'rpgc_popout', 'width=460,height=860');
                 if (!popWin) { state.status = { kind: 'warning', text: 'The browser blocked the pop-out window. Allow pop-ups for Lumiverse and try again.' }; const s = S(); s.uiPanelMode = 'drawer'; return applyPanelMode(); }
-                popWin.document.title = 'RPG Companion HMS Edition 2.8.17 — Stability & Tracking Integrity';
+                popWin.document.title = 'RPG Companion HMS Edition 2.8.18 — Updated Six-Sided World Compatibility';
                 syncPopoutLook(popWin);
                 try { if (!popLookObs) { popLookObs = new MutationObserver(() => syncPopoutLook(popWin)); popLookObs.observe(document.documentElement, { attributes: true }); if (document.body) popLookObs.observe(document.body, { attributes: true, attributeFilter: ['class'] }); } } catch { /* optional */ }
                 popWin.addEventListener('beforeunload', () => { popWin = null; if (panelMode() === 'popout') { const s = S(); s.uiPanelMode = 'drawer'; saveSettings(false); applyPanelMode(); render(); } });
