@@ -2296,7 +2296,7 @@ async function pushState(chatId, snapshot = null) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.9-rc.1';
+const RPGC_VERSION = '2.8.10-rc.1';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -3867,10 +3867,9 @@ function atlasSurvLevel(text) {
     return 'unknown';
 }
 
-function atlasAddMushokuPath(atlas, segments) {
-    if (!atlas || !Array.isArray(segments) || !segments.length ||
-        !segments.some(s => /^(?:Six-Faced World|Central Continent)$/i.test(String(s).trim())) ||
-        !segments.some(s => /^Asura Kingdom$|^Fittoa Region$|^Demon Continent$/i.test(String(s).trim()))) return false;
+function atlasAddMushokuPath(atlas, segments, worldId = 'mushoku') {
+    if (worldId !== 'mushoku' || !atlas || !Array.isArray(segments) || !segments.length ||
+        !segments.some(x => /^(?:Six-Faced World|Six-Sided World|Central Continent|Demon Continent|Milis Continent|Millis Continent|Begaritt Continent|Heavenly Continent)$/i.test(String(x).trim()))) return false;
     let parent = null, changed = false;
     for (const raw of mushokuLocationSegments(segments).slice(0, 12)) {
         const seg = atlasSeg(raw);
@@ -3898,12 +3897,12 @@ function atlasAddMushokuPath(atlas, segments) {
     return changed;
 }
 
-function atlasFor(chatId, segments = null) {
+function atlasFor(chatId, segments = null, worldId = 'mushoku') {
     const p = lorePool.get(chatId);
     const entries = p && Array.isArray(p.entries) ? p.entries : [];
     const c = atlasCache.get(chatId);
     if (c && c.at === (p?.at ?? null) && c.n === entries.length && (c.atlas || !segments)) {
-        if (segments) atlasAddMushokuPath(c.atlas, segments);
+        if (segments) atlasAddMushokuPath(c.atlas, segments, worldId);
         return c.atlas;
     }
     let atlas = null;
@@ -3913,7 +3912,7 @@ function atlasFor(chatId, segments = null) {
         atlas.baseVersion = `${p?.at ?? 'hud'}-${atlas.nodes.size}`;
         atlas.version = atlas.baseVersion;
         atlas.ix = new Map([...atlas.nodes.keys()].map((id, i) => [id, i]));      // short ids for the panel
-        if (segments) atlasAddMushokuPath(atlas, segments);
+        if (segments) atlasAddMushokuPath(atlas, segments, worldId);
         if (!atlas.nodes.size) atlas = null;
     }
     atlasCache.set(chatId, { at: p?.at ?? null, n: entries.length, atlas });
@@ -3960,15 +3959,15 @@ function atlasObserveHistory(atlas, chat) {
     if (!seen) { seen = new Set(); atlasObservedPaths.set(atlas, seen); }
     for (const m of relReadings(chat).slice(-100)) {
         const hud = messageHud(m);
-        if (!hud || !hud.location) continue;
+        if (!hud || !hud.location || worldOf(worldLines(hud)) !== 'mushoku') continue;
         const key = JSON.stringify(hud.location);
         if (seen.has(key)) continue;
-        atlasAddMushokuPath(atlas, hud.location);
+        atlasAddMushokuPath(atlas, hud.location, worldOf(worldLines(hud)));
         seen.add(key);
     }
 }
 function atlasHereInfo(chatId, hud, chat = null) {
-    const atlas = atlasFor(chatId, hud && hud.location);
+    const atlas = atlasFor(chatId, hud && hud.location, worldOf(worldLines(hud)));
     if (!atlas) return null;
     atlasObserveHistory(atlas, chat);
     const here = hud && hud.location ? atlasLocate(atlas, hud.location) : null;
@@ -4705,10 +4704,6 @@ async function runSeparateUpdate(chatId, targetId = null) {
                 ...simStoreKeys(comp, existing, fresh, await getChatState(chatId), msg.id) });
             await keepRoomReading(chatId, comp, messageHud(msg));
             await readingsAfterReply(chatId, fresh, msg, comp.injuries || null, comp.hitogami || null);
-            try {
-                const sp = comp.you && comp.you.spells;
-                if (sp && sp.length && magicCfg().on) { const st2 = await getChatState(chatId); if (spellbookAdd(st2, sp.map(n => ({ name: n })), 'story')) await saveChatState(chatId, st2); }
-            } catch { /* the spellbook is a convenience */ }
             if (comp.cutOff) setStatus(chatId, 'warning', `Characters updated by a separate call (${secs}s). The answer was cut off by the response length limit, so only its first part was read. Raise the maximum response length (max tokens) of the connection the tracker uses, or switch off modules you do not need in Settings → HMS systems.`);
             else setStatus(chatId, 'ok', `Characters updated by a separate call (${secs}s).`);
             return;
@@ -6288,6 +6283,33 @@ const HUD_HEAD_RE = /^[ \t]*(?:\*\*)?[ \t]*(?:#{1,6}[ \t]*)?WORLD STATE[ \t]*(?:
 const HUD_SEP_RE = /^[ \t]*(?:\*[ \t]*){3,}$|^[ \t]*(?:-[ \t]*){3,}$|^[ \t]*(?:_[ \t]*){3,}$/;
 const LOC_MARK_RE = /^[◆◇⌖►▶•]/;
 const LOC_ARROW_RE = /\s*(?:→|⟶|➜|›|»)\s*/;
+function mtCalendar(text) {
+    const t = String(text || '');
+    const m = t.match(/Armored Dragon Calendar:\s*K\.?\s*(\d{3,4})\s*,\s*(?:([^,|\n]+?)\s*\(Month\s*(\d{1,2})\)|Month\s*(\d{1,2}))\s*,\s*Day\s*(\d{1,2})\b/i);
+    if (m) {
+        const year = Number(m[1]), month = Number(m[3] || m[4]), day = Number(m[5]);
+        return month >= 1 && month <= 12 && day >= 1 && day <= 30 ? { year, month, day, monthName: m[2]?.trim() || null } : null;
+    }
+    const old = t.match(/\bYear:\s*K\.?\s*(\d{3,4})\s*\|\s*Day:\s*(\d{1,3})\b/i);
+    return old && Number(old[2]) >= 1 && Number(old[2]) <= 360 ? { year: Number(old[1]), month: null, day: Number(old[2]), monthName: null } : null;
+}
+function mtCalendarDay(date) {
+    return date.year * 360 + (date.month ? (date.month - 1) * 30 : 0) + date.day - 1;
+}
+function mtPowerViews(text) {
+    const t = String(text || '').trim();
+    const m = t.match(/^Shown:\s*([\s\S]*?)\s*\|\s*True:\s*([\s\S]+)$/i);
+    return { shown: m ? m[1].trim() : null, actual: (m ? m[2] : t).split(/\s*\|\s*(?:Reserve|Status):/i)[0].trim() };
+}
+function mtRankRows(text, ranks) {
+    return mtPowerViews(text).actual.split(/\s*[,;]\s*/).map(part => {
+        const m = part.match(/^(.+?)\s*:\s*(.+)$/) || part.match(/^(.+?)\s*\(([^)]+)\)$/) || part.match(/^(.+?)\s+[—–-]\s+(.+)$/);
+        if (!m) return null;
+        const rank = ranks.find(x => new RegExp(`\\b${x}\\b`, 'i').test(m[2])) || (/beginner/i.test(m[2]) ? ranks[0] : null);
+        return { name: m[1].trim(), rank: m[2].trim(), step: rank ? ranks.indexOf(rank) : null };
+    }).filter(Boolean);
+}
+
 function mushokuLocationSegments(segments) {
     if (!Array.isArray(segments)) return [];
     // Six-Sided combines geographic levels and rooms with commas. Respect brackets and
@@ -9037,58 +9059,85 @@ const MT_ARC_SMALL = new Set(['and', 'the', 'of', 'to', 'a', 'in', 'on', 'at', '
 function mtArcTitle(t) {
     return String(t).toLowerCase().split(/\s+/).map((w, i) => (i && MT_ARC_SMALL.has(w) ? w : w.replace(/^(\p{L})/u, c => c.toUpperCase()))).join(' ').replace(/'S\b/g, '\u2019s').replace(/\s+arc$/i, '');
 }
-/** The arcs with their start years: the lorebook's own World State entries, else the built-in canon list. */
+const mtScheduleCache = new WeakMap();
+function mtReferenceEntries(chatId) {
+    return loreCatalogPool(chatId)?.entries || getLorePool(chatId);
+}
+function mtCanonSchedule(chatId) {
+    const entries = mtReferenceEntries(chatId);
+    if (mtScheduleCache.has(entries)) return mtScheduleCache.get(entries);
+    const rows = [];
+    for (const entry of entries) {
+        if (!/^\s*\[CANON CLOCK\b/i.test(entry.content || '')) continue;
+        for (const line of String(entry.content).split('\n')) {
+            const m = line.match(/^\s*-\s*K(\d{3,4})\s*[·|—–-]\s*Month\s*(\d{1,2})\s*[—–-]\s*Arc\s+(\d{1,2})(?:\.(\d+))?\s*[—–-]\s*(.+)$/i);
+            if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) continue;
+            rows.push({ year: Number(m[1]), month: Number(m[2]), no: Number(m[3]), part: m[4] || null, title: m[5].trim() });
+        }
+    }
+    rows.sort((x, y) => x.year - y.year || x.month - y.month);
+    mtScheduleCache.set(entries, rows);
+    return rows;
+}
+/** Lorebook descriptions and dated starts augment a complete built-in arc index. */
 function mtArcList(chatId) {
     const out = new Map();
-    for (const e of getLorePool(chatId)) {
+    for (const [no, year, title] of MT_ARCS) out.set(no, { no, year, title });
+    for (const e of mtReferenceEntries(chatId)) {
         const m = String(e.content || '').match(/^\s*\[WORLD STATE\s*[\u2014\u2013-]\s*ARC\s+(\d{1,2})\s*:\s*([^\]\n]+?)\s*(?:[\u2014\u2013-]\s*canon[^\]]*)?\]/i);
         if (!m) continue;
-        const y = String(e.content).slice(0, 2000).match(/\bK\.?\s?(\d{3})\b/);
+        const y = String(e.content).slice(0, 2000).match(/\bK\.?\s?(\d{3,4})\b/);
         const no = Number(m[1]);
-        if (y && !out.has(no)) out.set(no, { no, year: Number(y[1]), title: mtArcTitle(m[2]) });
+        if (y) out.set(no, { no, year: Number(y[1]), title: mtArcTitle(m[2]) });
     }
-    if (out.size < 3) for (const [no, year, title] of MT_ARCS) if (!out.has(no)) out.set(no, { no, year, title });
-    return [...out.values()].sort((a, b) => a.no - b.no);
+    const dated = new Set();
+    for (const event of mtCanonSchedule(chatId)) if (!dated.has(event.no)) {
+        dated.add(event.no);
+        const row = out.get(event.no);
+        out.set(event.no, { no: event.no, title: row?.title || event.title, year: event.year, month: event.month });
+    }
+    return [...out.values()].sort((x, y) => x.no - y.no);
 }
-/** Where the story stands on the saga's timeline: the year, the arc, and how far the next one is. */
+/** Canon references stay distinct from an explicit personal arc or Sandbox frame. */
 function mtSaga(chatId, year, arcLine, date = null) {
-    if (year === null || year === undefined || !Number.isFinite(year)) return null;
+    if (!Number.isFinite(year)) return null;
     const arcs = mtArcList(chatId);
     if (!arcs.length) return null;
-    const am = String(arcLine || '').match(/\bArc\s+(\d{1,2})(?:\s*-\s*([A-Z]))?\s*(?::\s*(.+))?$/i);
-    const personal = String(arcLine || '').trim();
-    const participation = am ? 'explicit' : personal ? 'personal' : 'unknown';
-    let cur = am ? arcs.find(a => a.no === Number(am[1])) || null : null;
-    // Year alone cannot distinguish arcs that start in the same year. Show the first
-    // possible canon arc for that year without claiming the player is in it.
-    if (!cur) cur = arcs.filter(a => a.year < year).slice(-1)[0] || arcs.find(a => a.year === year) || null;
-    if (!am && arcs.some(a => a.year === year)) cur = arcs.find(a => a.year === year);
-    const next = cur ? arcs.find(a => a.no > cur.no && a.year >= year) || null : arcs.find(a => a.year >= year) || null;
-    const from = Math.min(arcs[0].year, year), to = Math.max(arcs[arcs.length - 1].year, year);
-    return { year, month: date && date.month || null, day: date && date.day || null, monthName: date && date.monthName || null,
-        personalArc: participation === 'personal' ? personal : null, participation, canonMode: null,
-        from, to, arcs, current: cur ? cur.no : null, part: am && am[2] ? am[2].toUpperCase() : null, partName: am && am[3] ? am[3].trim() : null,
-        next: next ? { no: next.no, title: next.title, year: next.year, inYears: next.year - year } : null };
+    const text = String(arcLine || '').trim();
+    const sandbox = /^Sandbox:/i.test(text);
+    const am = text.match(/\bArc\s+(\d{1,2})(?:(?:\.(\d+))|(?:\s*-\s*([A-Z])))?(?:\s*:\s*(.+?))?(?:\)|$)/i);
+    const explicit = !!am && !sandbox;
+    const participation = explicit ? 'explicit' : text ? 'personal' : 'unknown';
+    const schedule = mtCanonSchedule(chatId);
+    const month = date?.month || null;
+    const mark = year * 12 + (month || 1) - 1;
+    const available = month ? schedule.filter(e => e.year * 12 + e.month - 1 <= mark) : [];
+    const latestMark = available.length ? available[available.length - 1].year * 12 + available[available.length - 1].month - 1 : null;
+    const reference = latestMark === null ? null : available.find(e => e.year * 12 + e.month - 1 === latestMark);
+    let cur = am ? arcs.find(e => e.no === Number(am[1])) || null : reference ? arcs.find(e => e.no === reference.no) || null : null;
+    if (!cur && (!month || !schedule.length)) cur = arcs.filter(e => e.year <= year).slice(-1)[0] || null;
+    const next = cur ? arcs.find(e => e.no > cur.no && (e.year > year || e.year === year && (!month || (e.month || 1) > month))) || null
+        : arcs.find(e => e.year > year || e.year === year && (!month || (e.month || 1) >= month)) || null;
+    const part = am ? am[2] || am[3] || null : reference?.part || null;
+    return { year, month, day: date?.day || null, monthName: date?.monthName || null,
+        personalArc: participation === 'personal' ? text : null, participation, canonMode: null,
+        from: Math.min(arcs[0].year, year), to: Math.max(arcs[arcs.length - 1].year, year), current: cur?.no || null,
+        part, partName: am?.[4]?.trim() || null,
+        next: next ? { no: next.no, title: next.title, year: next.year, inYears: next.year - year,
+            ...(month && next.month ? { inMonths: next.year * 12 + next.month - 1 - mark } : {}) } : null };
 }
 
 function worldMushoku(chatId, lines, st, chat = null) {
-    const dragon = worldFind(lines, /^Armored Dragon Calendar:\s*K\.?\s*(\d{3,4})\s*,\s*([^,|]+?)\s*\(Month\s*(\d{1,2})\)\s*,\s*Day\s*(\d{1,2})/i);
     const yr = worldFind(lines, /^Year:\s*K\.?\s*(\d+)\s*\|\s*Day:\s*(\d+)(?:\s*\|\s*Time:\s*([\d:]+)\s*(?:\(([^)]+)\))?)?/i);
-    const date = dragon ? { year: Number(dragon[1]), month: Number(dragon[3]), monthName: dragon[2].trim(), day: Number(dragon[4]) } : yr ? { year: Number(yr[1]), month: null, monthName: null, day: Number(yr[2]) } : null;
+    const date = mtCalendar(lines.join('\n'));
     const birth = worldFind(lines, /^Birth:\s*K\.?\s*(\d+)\s*\|\s*Race:\s*([^|]+?)\s*\|\s*Age:\s*(\d+)\s*\|\s*Origin:\s*(.+)$/i);
-    const born = worldFind(lines, /\bAge:\s*(\d+)\s*\(born\s*K\.?\s*(\d+)(?:\s*,\s*Month\s*(\d{1,2}))?\)/i);
+    const born = worldFind(lines, /\bAge:\s*(\d+)\s*(?:🎂\s*)?\(born\s*K\.?\s*(\d+)(?:\s*,\s*Month\s*(\d{1,2}))?\)/i);
     const bornField = worldFind(lines, /(?:^|\|)\s*(?:Birth|Born):\s*K\.?\s*(\d{3,4})(?:\s*,\s*Month\s*(\d{1,2}))?/i);
     const ageField = worldFind(lines, /\bAge:\s*(\d{1,3})\b/i);
     const race = worldFind(lines, /\bRace:\s*([^|]+?)(?:\s*\||$)/i);
     const origin = worldFind(lines, /\bOrigin:\s*([^|]+?)(?:\s*\||$)/i);
     const adv = worldFind(lines, /^Adventurer:\s*([A-S])-?\s*Rank(?:\s*\|\s*(Solo|Party:\s*([^|]+?)))?(?:\s*\|\s*Clan:\s*(.+))?$/i);
     const one = (re) => { const m = worldFind(lines, re); return m ? m[1].trim() : null; };
-    const ladder = (s, ranks) => String(s || '').split(/\s*,\s*/).map(x => {
-        const m = x.match(/^(.+?):\s*(.+)$/);
-        if (!m) return null;
-        const r = ranks.find(k => new RegExp(`\\b${k}\\b`, 'i').test(m[2])) || (/beginner/i.test(m[2]) ? ranks[0] : null);
-        return { name: m[1].trim(), rank: m[2].trim(), step: r ? ranks.indexOf(r) : null };
-    }).filter(Boolean);
     const hg = worldFind(lines, /^\[HITOGAMI:\s*([^\]]+)\]/i);
     const dreams = hg ? (hg[1].match(/Dreams:\s*(\d+)/i) || [])[1] : null;
     const w = isPlainObject(st.world) ? st.world : {};
@@ -9096,11 +9145,11 @@ function worldMushoku(chatId, lines, st, chat = null) {
         year: date ? date.year : null, month: date ? date.month : null, monthName: date ? date.monthName : null, day: date ? date.day : null, period: yr && yr[4] ? yr[4] : null,
         birth: birth ? Number(birth[1]) : born ? Number(born[2]) : bornField ? Number(bornField[1]) : null, birthMonth: born && born[3] ? Number(born[3]) : bornField && bornField[2] ? Number(bornField[2]) : null, race: birth ? birth[2].trim() : race ? race[1].trim() : null, age: birth ? Number(birth[3]) : born ? Number(born[1]) : ageField ? Number(ageField[1]) : null, origin: birth ? birth[4].trim() : origin ? origin[1].trim() : null,
         adventurer: adv ? { rank: adv[1], party: adv[3] ? adv[3].trim() : (adv[2] && /solo/i.test(adv[2]) ? null : null), solo: !!(adv[2] && /solo/i.test(adv[2])), clan: adv[4] ? adv[4].trim() : null } : null,
-        mana: one(/^Mana Capacity:\s*([^|]+)/i), reserve: one(/\bReserve:\s*([^|]+)/i), casting: one(/^Casting Method:\s*(.+)$/i) || (one(/^Voiceless Casting:\s*(.+)$/i) ? `Voiceless (${one(/^Voiceless Casting:\s*(.+)$/i)})` : null), touki: one(/^Touki(?: \(Battle Aura\))?:\s*(.+)$/i), canon: one(/^Canon:\s*([^|]+)/i), agency: one(/^Narrative Mode:\s*([^|]+)/i),
-        manaLore: mtManaTierLore(chatId, one(/^Mana Capacity:\s*([^|]+)/i)), toukiLore: /^none/i.test(one(/^Touki:\s*(.+)$/i) || 'none') ? null : worldLore(chatId, 'touki'),
+        mana: mtPowerViews(one(/^Mana Capacity:\s*(.+)$/i)).actual || null, reserve: one(/\bReserve:\s*([^|]+)/i), casting: one(/^Casting Method:\s*(.+)$/i) || (one(/^Voiceless Casting:\s*(.+)$/i) ? `Voiceless (${one(/^Voiceless Casting:\s*(.+)$/i)})` : null), touki: mtPowerViews(one(/^Touki(?: \(Battle Aura\))?:\s*(.+)$/i)).actual || null, canon: one(/^Canon:\s*([^|]+)/i), agency: one(/^Narrative Mode:\s*([^|]+)/i),
+        manaLore: mtManaTierLore(chatId, mtPowerViews(one(/^Mana Capacity:\s*(.+)$/i)).actual), toukiLore: /^none/i.test(mtPowerViews(one(/^Touki(?: \(Battle Aura\))?:\s*(.+)$/i)).actual || 'none') ? null : worldLore(chatId, 'touki'),
         martial: (() => {
             const sword = one(/^Sword Style:\s*(.+)$/i);
-            const list = sword ? (() => { const m = sword.match(/^(.+?)\s*\(([^)]+)\)$/); return m ? ladder(`${m[1]}: ${m[2]}`, MT_MARTIAL) : []; })() : ladder(one(/^Martial Style:\s*(.+)$/i), MT_MARTIAL);
+            const list = mtRankRows(sword || one(/^Martial Style:\s*(.+)$/i), MT_MARTIAL);
             const idx = worldSpellIndex(chatId, /^\s*#+\s*Master Technique Index/i);
             if (idx) for (const m of list) {
                 const rows = idx[m.name.toLowerCase()] || [];
@@ -9112,7 +9161,7 @@ function worldMushoku(chatId, lines, st, chat = null) {
         triangle: (() => { const idx = worldSpellIndex(chatId, /^\s*#+\s*Master Technique Index/i); return idx && idx._triangle ? idx._triangle : null; })(),
         magic: (() => {
             const tiers = one(/^Magic Tiers:\s*(.+)$/i);
-            const list = tiers ? tiers.split(/\s*,\s*/).map(x => { const m = x.match(/^(.+?)\s*\(([^)]+)\)$/); return m ? ladder(`${m[1]}: ${m[2]}`, MT_MAGIC)[0] : null; }).filter(Boolean) : ladder(one(/^Magic School:\s*(.+)$/i), MT_MAGIC);
+            const list = mtRankRows(tiers || one(/^Magic School:\s*(.+)$/i), MT_MAGIC);
             const idx = worldSpellIndex(chatId) || spellIndexFromCatalog(chatId);
             if (idx) for (const m of list) {
                 const rows = idx[m.name.toLowerCase()] || [];
@@ -9128,7 +9177,7 @@ function worldMushoku(chatId, lines, st, chat = null) {
         drain: (() => { const m = worldFind(lines, /^Drain Syndrome:\s*([^|]+?)(?:\s*\|\s*Onset:\s*(.+))?$/i); return m ? { stage: m[1].trim(), onset: m[2] ? m[2].trim() : null } : null; })(),
         term: (() => { const m = worldFind(lines, /^Term:\s*(.+?)\s*\|\s*Role:\s*(.+)$/i); return m ? { term: m[1].trim(), role: m[2].trim() } : null; })(),
         hitogami: hg ? { state: hg[1].trim(), dreams: dreams ? Number(dreams) : null } : null,
-        saga: (() => { try { const saga = mtSaga(chatId, date ? date.year : null, one(/^(?:Current )?Arc:\s*(.+)$/i), date); if (saga) { saga.canonMode = one(/^Canon:\s*([^|]+)/i); saga.events = chat ? mtEventLedger(chat) : []; } return saga; } catch { return null; } })(),
+        saga: (() => { try { const saga = mtSaga(chatId, date ? date.year : null, (one(/^(?:Current )?Arc:\s*(.+)$/i) || lines.find(line => /^(?:Arc\s+\d|Era\s+\d|Sandbox:)/i.test(line)) || null), date); if (saga) { saga.canonMode = one(/^Canon:\s*([^|]+)/i); saga.events = chat ? mtEventLedger(chat) : []; } return saga; } catch { return null; } })(),
         advice: (Array.isArray(w.advice) ? w.advice : []).slice(-12).reverse()
     };
 }
@@ -9975,10 +10024,6 @@ function recoverFromReasoning(msg, content) {
 async function hmsHandleReply(chatId, chat, msg, generationType) {
     const out = await hmsHandleReplyInner(chatId, chat, msg, generationType);
     chronicleSyncSoon(chatId);           // the reply before this one is settled now: into the Memory Cortex
-    try {
-        const sp = out && out.comp && out.comp.you && out.comp.you.spells;
-        if (sp && sp.length && magicCfg().on) { const st = await getChatState(chatId); if (spellbookAdd(st, sp.map(n => ({ name: n })), 'story')) await saveChatState(chatId, st); }
-    } catch (e) { logW(`[RPG Companion HMS] Spellbook update failed: ${e?.message || e}`); }
     return out;
 }
 
@@ -10310,12 +10355,9 @@ function hmsClock(hud) {
         if (hh === 12) hh = pm ? 12 : 0; else if (pm) hh += 12;
     }
     const minuteOfDay = hh * 60 + mm;
-    const dragon = top.match(/Armored Dragon Calendar:\s*K\.?\s*(\d{3,4})\s*,\s*([^,|]+?)\s*\(Month\s*(\d{1,2})\)\s*,\s*Day\s*(\d{1,2})/i);
-    if (dragon) {
-        const year = Number(dragon[1]), month = Number(dragon[3]), day = Number(dragon[4]);
-        if (month >= 1 && month <= 12 && day >= 1 && day <= 30)
-            return { minutes: ((year * 12 + month - 1) * 30 + day - 1) * 1440 + minuteOfDay, dated: true, yearKnown: true };
-    }
+    const calendar = mtCalendar(top);
+    if (calendar) return { minutes: mtCalendarDay(calendar) * 1440 + minuteOfDay, dated: true, yearKnown: true };
+    if (/Armored Dragon Calendar:/i.test(top)) return null;
     const mon = top.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})\b/i);
     if (mon) {
         const mi = HMS_MONTHS.indexOf(mon[1].toLowerCase());
@@ -14354,7 +14396,8 @@ function hmsMagicPanel(chat, st, cfg, sys, chatId = null) {
     const meters = sys.meters.filter(m => /\b(od|mana|magic|corruption|integrity)\b/i.test(m.label));
     const arts = sys.abilities.filter(g => /magic|tradition|spell/i.test(g.category));
     const cooldowns = (sys._lines || []).filter(l => /cooldown|recharg/i.test(l.text)).map(l => l.text.trim()).slice(0, 4);
-    const book = st && Array.isArray(st.spellbook) ? st.spellbook.slice(-60) : [];
+    const saved = new Map((Array.isArray(st && st.spellbook) ? st.spellbook : []).map(x => [spellKey(x.name), x]));
+    const book = [...spellKnown(chat, st)].map(([key, value]) => saved.get(key) || { name: value.name, from: value.from }).slice(-60);
     if (!pools.length && !meters.length && !arts.length && !cooldowns.length && !book.length && !list && !ranked) return null;
     return { pools, meters, arts, cooldowns, spellbook: book, list };
 }
@@ -14548,10 +14591,7 @@ function spellStanding(lines) {
         let m = l.match(/^(?:Magic Schools?|Magic Tiers?|Schools? of Magic|Magic Ranks?|Spell Ranks?|Magic Rank)\s*:\s*(.+)$/i);
         if (m) {
             out.ladder = out.ladder || 'mt';
-            for (const part of m[1].split(/\s*[,;|]\s*/)) {
-                const k = part.match(/^(.+?)\s*[:–—]\s*(.+)$/) || part.match(/^(.+?)\s*\(([^)]+)\)$/) || part.match(/^(.+?)\s+-\s+(.+)$/);
-                if (k) put(k[1], k[2].trim(), spellMtStep(k[2]));
-            }
+            for (const row of mtRankRows(m[1], SPELL_LADDER.mt)) put(row.name, row.rank, spellMtStep(row.rank));
             continue;
         }
         m = l.match(/^Magic:\s*([^|]+?)\s*\|\s*Gate:\s*([^|]+)/i);
@@ -14584,7 +14624,7 @@ function spellStoryFoldUncached(chat) {
         const d = getSwipeData(m);
         const y = d && isPlainObject(d.survival) ? d.survival : null;
         if (!y) continue;
-        for (const n of Array.isArray(y.learned) ? y.learned : []) { const k = spellKey(n); if (k && !learned.has(k)) learned.set(k, { name: n, msgId: m.id, at: order.get(m.id) }); }
+        for (const n of [...(Array.isArray(y.spells) ? y.spells : []), ...(Array.isArray(y.learned) ? y.learned : [])]) { const k = spellKey(n); if (k) learned.set(k, { name: n, msgId: m.id, at: order.get(m.id) }); }
         for (const n of Array.isArray(y.mastered) ? y.mastered : []) { const k = spellKey(n); if (k) mastered.set(k, { name: n, msgId: m.id, at: order.get(m.id) }); }
         for (const s of Array.isArray(y.study) ? y.study : []) if (s && s.spell) progress.set(spellKey(s.spell), { name: s.spell, progress: s.progress, note: s.note || null, msgId: m.id, at: order.get(m.id) });
     }
@@ -14599,18 +14639,21 @@ function spellSame(a, b) { return a === b; }
 function spellKnown(chat, st, fold) {
     const f = fold || spellStoryFold(chat);
     const forget = isPlainObject(st && st.spellForget) ? st.spellForget : {};
+    const allowed = (key, event) => {
+        if (!(key in forget)) return true;
+        const anchor = forget[key] ? f.order.get(forget[key]) : -1;
+        return anchor !== undefined && event.at > anchor;
+    };
     const out = new Map();
     for (const sp of Array.isArray(st && st.spellbook) ? st.spellbook : []) {
-        const k = spellKey(sp.name);
-        // Earlier builds populated this source from every fight-menu option. It is not proof
-        // of a learned spell; a later witnessed cast or explicit manual mark still counts.
-        if (k && sp.from !== 'fight') out.set(k, { name: sp.name, from: sp.from || 'story' });
+        const key = spellKey(sp.name);
+        if (key && sp.from !== 'story' && sp.from !== 'fight' && !(key in forget)) out.set(key, { name: sp.name, from: sp.from || 'you' });
     }
-    for (const [k, v] of f.learned) {
-        if (k in forget) { const at = forget[k] ? f.order.get(forget[k]) : -1; if (at === undefined || v.at <= at) continue; }
-        if (!out.has(k)) out.set(k, { name: v.name, from: 'learned', msgId: v.msgId });
+    for (const [key, event] of f.learned) if (allowed(key, event) && !out.has(key)) out.set(key, { name: event.name, from: 'learned', msgId: event.msgId });
+    for (const [key, event] of f.mastered) if (allowed(key, event)) {
+        if (!out.has(key)) out.set(key, { name: event.name, from: 'mastered', msgId: event.msgId });
+        out.get(key).mastered = true;
     }
-    for (const [k, v] of f.mastered) if (!out.has(k) && !(k in forget)) out.set(k, { name: v.name, from: 'mastered', msgId: v.msgId });
     return out;
 }
 
@@ -14653,7 +14696,7 @@ function spellListPanel(chatId, chat, st, sys) {
     const spells = cat.map(r => {
         let status, why = null;
         const sch = has(r.school) || (r.parent ? has(r.parent) : null);
-        if (fold.mastered.has(r.key)) status = 'mastered';
+        if (known.get(r.key)?.mastered) status = 'mastered';
         else if (isKnown(r.key)) status = 'known';
         else if (studyKeys.has(r.key)) status = 'study';
         else if (r.kind === 'unique') { status = 'special'; why = r.who ? `Unique — ${r.who}` : 'Unique'; }
@@ -14675,7 +14718,7 @@ function spellListPanel(chatId, chat, st, sys) {
     });
     // a known spell the lorebook does not have still shows, under its own heading
     const catKeys = cat.map(r => r.key);
-    for (const [k, v] of known) if (!catKeys.some(c => spellSame(c, k))) spells.push({ name: v.name, key: k, school: 'Other', rank: null, step: null, status: fold.mastered.has(k) ? 'mastered' : 'known', why: v.from === 'you' ? 'Marked by you' : 'From the story', who: null, effect: null, chant: null, fan: false, progress: null, note: null });
+    for (const [k, v] of known) if (!catKeys.some(c => spellSame(c, k))) spells.push({ name: v.name, key: k, school: 'Other', rank: null, step: null, status: v.mastered ? 'mastered' : 'known', why: v.from === 'you' ? 'Marked by you' : 'From the story', who: null, effect: null, chant: null, fan: false, progress: null, note: null });
     const bySchool = new Map();
     for (const s of spells) { const k = spellSchoolKey(s.school); if (!bySchool.has(k)) bySchool.set(k, { key: k, name: s.school, spells: [] }); bySchool.get(k).spells.push(s); }
     const schools = [...bySchool.values()].map(g => {
@@ -14788,8 +14831,8 @@ function hmsParseWhen(text, now, hud = null) {
         const currentDay = Math.floor(now / 1440);
         const yearStart = Math.floor(currentDay / 360) * 360;
         const head = hud && Array.isArray(hud.lines) ? hud.lines.slice(0, 4).map(l => l.text).join(' ') : '';
-        const dragon = head.match(/Armored Dragon Calendar:[^\n]*?\(Month\s*(\d{1,2})\)/i);
-        const month = dragon ? Number(dragon[1]) : null;
+        const calendar = mtCalendar(head);
+        const month = calendar ? calendar.month : null;
         const targetDay = month >= 1 && month <= 12 && n <= 30 ? yearStart + (month - 1) * 30 + n - 1 : yearStart + n - 1;
         if (n >= 1 && n <= (month ? 30 : 360)) return targetDay * 1440 + (c ? ((c.minutes % 1440) + 1440) % 1440 : 1439);
     }
@@ -15768,10 +15811,10 @@ spindle.onFrontendMessage(async (payload, userId) => {
                 const chat = await chatApi.getMessages(payload.chatId);
                 const m = latestHudMessage(chat);
                 const hud = m ? parseHud(textOf(m.content)) : null;
-                let atlas = atlasFor(payload.chatId, hud && hud.location);
+                let atlas = atlasFor(payload.chatId, hud && hud.location, worldOf(worldLines(hud)));
                 if (!lorePool.has(payload.chatId)) {
                     await loreBuildPoolFromApi(payload.chatId);
-                    atlas = atlasFor(payload.chatId, hud && hud.location);
+                    atlas = atlasFor(payload.chatId, hud && hud.location, worldOf(worldLines(hud)));
                 }
                 atlasObserveHistory(atlas, chat);
                 if (!atlas) { toFrontend({ type: 'atlas', chatId: payload.chatId, atlas: null }); break; }

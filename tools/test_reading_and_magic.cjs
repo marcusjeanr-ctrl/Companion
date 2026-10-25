@@ -45,6 +45,8 @@ async function main() {
     for(const row of fixture.spells){const name=row.entry.content.match(/^\s*\[SPELL\s*[—–-]\s*([^\]]+)\]/i)?.[1];if(name&&!row.entry.disabled)assert(catalog.some(s=>s.name===name),'Canonical spell lost: '+name);}
     const state=await magic.ctx.getChatState('test');
     state.spellbook=['Ice Blade','Ice Smash','Rock Bullet'].map(name=>({name,from:'story'}));
+    assert(!magic.ctx.spellKnown(magic.messages,state).has('ice blade'),'Legacy automatic cache granted an unsupported spell');
+    await magic.ctx.setSwipeData('test',magic.messages[1],{survival:{learned:['Ice Blade','Ice Smash','Rock Bullet']}});
     const lines=magic.ctx.parseHud(hud()).lines;
     const panel=magic.ctx.spellListPanel('test',magic.messages,state,{_lines:lines});
     for(const name of ['Ice Blade','Ice Smash','Rock Bullet']){

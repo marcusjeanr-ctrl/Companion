@@ -38,8 +38,12 @@ if (process.argv[2] === '--capture') {
             assert(actual.hms.systems.clock > expected.hms.systems.clock);
             actual.hms.systems.clock = expected.hms.systems.clock;
             actual.hms.minds.clock = expected.hms.minds.clock;
+            if (expected.hms.atlas === null) {
+                assert(actual.hms.atlas?.trail.some(x => x.name === 'Buena Village'), 'Mushoku observed-place fallback lost its village');
+                actual.hms.atlas = null;
+            }
         }
         assert.deepEqual(actual, expected, `${sample.world}: existing 2.8.1 panels changed`);
     }
-    console.log('2.8.1 panel parity passed: every panel output in the four original demo worlds is preserved, with only the intended Mushoku calendar correction.');
+    console.log('2.8.1 panel parity passed: every panel output in the four original demo worlds is preserved, with only the intended Mushoku calendar and observed-Atlas corrections.');
 }

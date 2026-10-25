@@ -1,3 +1,13 @@
+## 2.8.10 compatibility candidate — audited Six-Sided tracking repairs
+
+- Parse numbered and named Armored Dragon dates through one calendar; fix month/year rollover, yearless deadlines and birthday birth fields.
+- Read actual Shown/True mana, Touki, magic schools and sword styles; preserve multiple sword styles without inventing schools named Shown or True.
+- Observe locations across all five continents and the Six-Sided roots, gated to Mushoku chats.
+- Rebuild automatic Known/Mastered state from active-swipe reports instead of permanently copying successful casts into the manual spellbook. Forget suppresses earlier mastery; later learning or mastery restores the spell. Manual grants remain. Legacy automatic cache entries require active message evidence.
+- Keep the complete 22-arc index under partial lore activation; read the card's dated canon calendar, decimal sub-arcs, Sandbox and Era frames. Month-sensitive canon references do not claim player participation.
+- Retain the original 2.8.1 request/refresh/repair flow, tracker history and schemas; add no validation or correction model calls. Read again stays local.
+- Add regressions for every audited case. Supply a separate corrected card copy resolving only conflicting HUD/output-order directives; preserve all lorebook entries and narrative content outside those directives.
+
 ## 2.8.9 compatibility candidate — restore original reading and complete the Magic catalog
 
 - Restore the supplied 2.8.1 tracker request transport, refresh workflow, JSON repair, lock enforcement, per-swipe storage and missing-block catch-up. Remove 2.8.8 quote validation, holding/review UI, correction calls and their settings. Old saved safeguard settings no longer affect tracking. Read again remains local.

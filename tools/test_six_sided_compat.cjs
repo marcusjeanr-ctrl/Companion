@@ -45,6 +45,7 @@ const code = [
  'function worldSpellIndex() { return null; }',
  'function spellIndexFromCatalog() { return null; }',
  'function getLorePool() { return entries; }',
+ 'function loreCatalogPool(chatId) { return lorePool.get(chatId); }',
  'function isPlainObject(x) { return x && typeof x === "object" && !Array.isArray(x); }',
  'function immText(s,n) { return typeof s === "string" ? s.slice(0,n) : null; }',
  'function partyText(s,n) { return typeof s === "string" ? s.slice(0,n) : null; }',

@@ -1,11 +1,11 @@
-# Mushoku compatibility in HMS 2.8.9 candidate
+# Mushoku compatibility in HMS 2.8.10 candidate
 
-Install the extension ZIP in Lumiverse. The Six-Sided World card, Living World card, start handler, and Reporter preset do not need edits. HMS reads the active chat's WORLD STATE HUD and the attached lorebook; it does not have an independent authoritative world state.
+Install the extension ZIP in Lumiverse. The original cards remain readable. A separate Six_Sided_World_HMS_Compatible.json copy resolves conflicting generic-HUD and output-order instructions in the supplied Six-Sided card; its lorebook is unchanged. Living World, the start handler and Reporter preset are unchanged. HMS reads the active chat's WORLD STATE HUD and the attached lorebook; it does not have an independent authoritative world state.
 
 ## What is implemented
 
 - Both Mushoku HUD dialects normalize date, age and birth, mana capacity and reserve, Touki, sword and magic ranks, voiceless casting, canon mode, agency, and geographic path. The Six-Sided calendar uses 12 months of 30 days. Living World's K-year/day format remains supported.
-- The 22 saga entries are read from the chat's lorebook when present. The panel separates a dated canon reference from Marcus's personal arc and shows explicit event outcomes recorded in chat metadata. Dates and lorebook entries do not prove participation or an event outcome. Swipes rebuild the outcome ledger from active metadata; after editing narration, use Read again to refresh its tracker report.
+- The complete 22-arc index is augmented by the chat's lorebook and dated canon calendar, even under partial activation. Numbered sub-arcs and Sandbox/Era frames are supported. The panel separates a dated canon reference from Marcus's personal arc and shows explicit event outcomes recorded in chat metadata. Dates and lorebook entries do not prove participation or an event outcome. Swipes rebuild the outcome ledger from active metadata; after editing narration, use Read again to refresh its tracker report.
 - The spell catalog shows eligibility separately from learned and mastered spells. A fight menu, catalog entry, or first attempt does not grant a spell. Study percentages stay unknown until reported. Spell identity is exact after punctuation and case normalization so a learned base spell does not grant a longer named variant.
 - A spell whose lorebook entry does not state a rank appears as **Rank unknown** under **All**, rather than being counted Within reach. The story decides when it can be learned.
 - Narrated practice can automatically enter Studying for either Mushoku HUD format. A manual stop suppresses earlier practice until a later practice event; an explicit learned cast becomes Known. Unknown progress remains blank.
@@ -45,3 +45,9 @@ node tools/test_reading_and_magic.cjs
 The original demo-panel parity fixture permits only the intended Mushoku absolute calendar-clock correction. The reading regression checks one ordinary model call with no evidence instructions, local rereads, preservation of data without quotes, eight reference pages, cache reuse and source-world isolation.
 
 This fixes demonstrated code paths; a successful local test does not guarantee that a model reads every RP fact correctly. The former 34% figure measured local panel payload computation, excluded model waiting, and is not a claim about the restored 2.8.1 refresh workflow. Live refresh time still depends on the chosen provider, history depth, enabled systems and lore retrieval.
+
+## 2.8.10 state migration and tests
+
+Automatic story/fight spell caches from older releases no longer grant Known by themselves. Active-swipe learning/mastery reports establish those spells; manually granted spells remain. A discarded swipe therefore cannot leave a permanent automatic grant. Forget also suppresses older mastery, while later learning or mastery restores the spell. No chat restart is needed.
+
+Run all five suites: `test_six_sided_compat.cjs`, `test_panel_tracking.cjs`, `test_2_8_1_panel_parity.cjs`, `test_reading_and_magic.cjs`, and `test_six_sided_repairs.cjs` under `tools/`. The repair suite uses the supplied card's exact canon-clock entry. Original demo-panel parity allows only the intended Mushoku calendar and observed-Atlas corrections. These deterministic tests verify data handling, not perfect interpretation of every live model response or a total-refresh speed percentage.
