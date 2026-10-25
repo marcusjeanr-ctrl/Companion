@@ -1,6 +1,6 @@
-> Six-Sided World compatibility fork of [RPG Companion HMS](https://github.com/TenderTriper/rpg-companion-hms). Version 2.8.19 — Visual HUD & Rank Parsing Fix. The Reporter preset and other world features come from the upstream package. See [compatibility notes](tools/SIX_SIDED_COMPAT.md) for scope and live validation limits.
+> Six-Sided World compatibility fork of [RPG Companion HMS](https://github.com/TenderTriper/rpg-companion-hms). Version 2.8.20 — Tracking Reconciliation Fixes. The Reporter preset and other world features come from the upstream package. See [compatibility notes](tools/SIX_SIDED_COMPAT.md) for scope and live validation limits.
 
-The 2.8.19 parser/display repairs are documented in [release validation](tools/VALIDATION_2_8_19.md). The 2.8.17 stability fixes are retained. The 2.8.18 format and utility-workflow changes are documented in [updated-card validation](tools/UPDATED_SIX_SIDED_2_8_18.md). The general fixes apply to the shared Companion engines, including classic tracking. Read the [categorized audit and validation report](tools/AUDIT_2_8_17.md). Run all regression suites with `node tools/run_tests.cjs`. Existing saves and the extension identifier are preserved.
+The 2.8.20 appointment, relationship, numerical-value and secret-owner fixes are documented in [release validation](tools/VALIDATION_2_8_20.md). The [2.8.19 parser/display repairs](tools/VALIDATION_2_8_19.md) and 2.8.17 stability fixes are retained. The 2.8.18 format and utility-workflow changes are documented in [updated-card validation](tools/UPDATED_SIX_SIDED_2_8_18.md). The general fixes apply to the shared Companion engines, including classic tracking. Read the [categorized audit and validation report](tools/AUDIT_2_8_17.md). Run all regression suites with `node tools/run_tests.cjs`. Existing saves and the extension identifier are preserved.
 
 
 # RPG Companion HMS Edition 2.8 beta
@@ -736,3 +736,4 @@ is by **Pyropia**.
 **RPG Companion** by **Marinara** (Marysia, marinara_spaghetti), licensed AGPL-3.0. Panels,
 presets, dice, deception tags, immersive HTML, portraits and the prompt editor are hers.
 This fork stays AGPL-3.0 — see `LICENSE`.
+

@@ -2341,7 +2341,7 @@ async function pushState(chatId, snapshot = null) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.19';
+const RPGC_VERSION = '2.8.20';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -11959,7 +11959,7 @@ function relPrevious(chat, st, rc) {
     const last = new Map();
     for (const m of msgs) {
         const d = getSwipeData(m);
-        if (d && Array.isArray(d.relations)) for (const r of d.relations) if (r && r.key) last.set(r.key, r);
+        if (d && Array.isArray(d.relations)) for (const r of d.relations) if (r && r.key) last.set(r.key, relReconcile(last.get(r.key), r, rc));
     }
     const pins = relPins(st);
     if (!last.size && !Object.keys(pins).length) return [];
@@ -12000,11 +12000,12 @@ function relNormalize(list, cfg, st = null, classic = false) {
         const name = e.name.replace(/\s+/g, ' ').trim().slice(0, 60);
         const key = lockKey(name);
         if (out.some(x => x.key === key)) continue;
-        const r = { key, name, standing: null, bond: partyText(e.bond, 60), minor: e.minor === true, mood: partyText(e.mood, 40), why: partyText(e.why, 140), reasons: {} };
+        const r = { key, name, standing: null, bond: partyText(e.bond, 60), minor: typeof e.minor === 'boolean' ? e.minor : null, mood: partyText(e.mood, 40), why: partyText(e.why, 140), reasons: {} };
         const i = relRank(e.standing, rc);
         if (i !== null) r.standing = rc.ladder[i];
         for (const b of rc.bars) {
-            const v = Number(e[b.id]);
+            const raw = e[b.id];
+            const v = typeof raw === 'number' || (typeof raw === 'string' && raw.trim()) ? Number(raw) : NaN;
             r[b.id] = Number.isFinite(v) ? Math.round(Math.max(b.two ? -100 : 0, Math.min(100, v))) : null;
         }
         if (isPlainObject(e.reasons)) for (const [k, v] of Object.entries(e.reasons)) {
@@ -12035,6 +12036,16 @@ function relSameWords(a, b) {
     return n(a) === n(b);
 }
 
+function relReconcile(previous, reading, rc, pin = null) {
+    const out = { ...reading };
+    if (previous) {
+        for (const field of ['standing', 'bond', 'minor', 'mood', ...rc.bars.map(b => b.id)]) {
+            if (out[field] === null || out[field] === undefined) out[field] = previous[field] ?? null;
+        }
+    }
+    return relGuard(out, pin, rc);
+}
+
 function hmsRelationsPanel(chat, st, cfg, classic = false) {
     const c = cfg || hmsCfg();
     const rc = relCfg(c, classic);
@@ -12055,7 +12066,7 @@ function hmsRelationsPanel(chat, st, cfg, classic = false) {
             if (!r || !r.key) continue;
             let p = people.get(r.key);
             if (!p) { p = { key: r.key, name: r.name, firstAt: at, readings: [] }; people.set(r.key, p); }
-            p.readings.push({ ...relGuard(r, pins[r.key], rc), at, msgId: m.id });
+            p.readings.push({ ...relReconcile(p.readings[p.readings.length - 1], r, rc, pins[r.key]), at, msgId: m.id });
             p.name = r.name;
         }
     }
@@ -12666,13 +12677,16 @@ function agendaNormalize(list) {
         const what = partyText(e.what ?? e.name ?? e.text, 90);
         if (!what) continue;
         const key = lockKey(what);
-        if (!key || out.some(x => x.key === key)) continue;
+        if (!key) continue;
         const kind = String(e.kind || '').toLowerCase();
         const rawState = String(e.state || '').toLowerCase().replace(/[ -]+/g, '_');
         const state = ['started', 'active', 'underway'].includes(rawState) ? 'in_progress' : ['abandoned', 'canceled'].includes(rawState) ? 'cancelled' : rawState === 'moved' ? 'open' : rawState;
         if (e.accepted === false || reportSpeculative(e) || (state && !AGENDA_STATES.includes(state))) continue;
-        out.push({ key, what, with: partyText(e.with ?? e.who, 60), where: partyText(e.where, 80), when: partyText(e.when, 60), due: partyText(e.due, 40),
-            kind: AGENDA_KINDS.includes(kind) ? kind : 'meeting', state: AGENDA_STATES.includes(state) ? state : state === 'moved' ? 'open' : 'open' });
+        const row = { key, what, with: partyText(e.with ?? e.who, 60), where: partyText(e.where, 80), when: partyText(e.when, 60), due: partyText(e.due, 40),
+            kind: AGENDA_KINDS.includes(kind) ? kind : 'meeting', state: AGENDA_STATES.includes(state) ? state : 'open' };
+        if (out.some(x => x.key === key && ['with', 'where', 'when', 'due'].every(f => lockKey(x[f] || '') === lockKey(row[f] || '')))) continue;
+        if (rawState === 'moved') row.moved = true;
+        out.push(row);
     }
     return out.length ? out.slice(0, 10) : null;
 }
@@ -12685,6 +12699,14 @@ function agendaSame(a, b) {
     if (!A.size || !B.size) return false;
     let n = 0; for (const t of A) if (B.has(t)) n++;
     return n >= Math.min(A.size, B.size) && n >= 1 && (a.includes(b) || b.includes(a) || n >= 2);
+}
+
+function agendaItemKey(items, row) {
+    const title = lockKey(row.what);
+    const base = `${title} :: ${lockKey(row.with || '')} :: ${lockKey(row.where || '')} :: ${lockKey(row.when || row.due || '')}`;
+    let key = row.key || title;
+    for (let n = 1; items.some(x => x.key === key); n++) key = n === 1 ? base : `${base} :: ${n}`;
+    return key;
 }
 
 function agendaActivityState(item, data) {
@@ -12713,8 +12735,15 @@ function agendaRead(chat, st) {
     const lastId = msgs.length ? msgs[msgs.length - 1].id : null;
     const idxOf = new Map(chat.map((m, i) => [m.id, i]));
     const items = [];
-    const compatible = (x, row) => (!row?.with || !x.with || lockKey(row.with) === lockKey(x.with)) && (!row?.where || !x.where || lockKey(row.where) === lockKey(x.where));
-    const find = (key, row = null) => items.find(x => x.key === key && compatible(x, row)) || items.find(x => agendaSame(x.key, key) && compatible(x, row)) || null;
+    const compatible = (x, row, dueAt = null) => (!row?.with || !x.with || lockKey(row.with) === lockKey(x.with)) &&
+        (!row?.where || !x.where || row.moved || lockKey(row.where) === lockKey(x.where)) &&
+        (!row || row.moved || (!row.when && !row.due) || (dueAt !== null && x.dueAt !== null ? dueAt === x.dueAt :
+            !x.when || lockKey(row.when || row.due) === lockKey(x.when)));
+    const find = (key, row = null, dueAt = null) => {
+        if (!row) { const exact = items.find(x => x.key === key); if (exact) return exact; }
+        const matches = items.filter(x => (lockKey(x.what) === key || agendaSame(lockKey(x.what), key)) && compatible(x, row, dueAt));
+        return matches.length === 1 ? matches[0] : null;
+    };
     for (const m of msgs) {
         const d = getSwipeData(m) || {};
         const e = hudAt.get(m.id);
@@ -12722,13 +12751,15 @@ function agendaRead(chat, st) {
         const idx = idxOf.has(m.id) ? idxOf.get(m.id) : -1;
         for (const r of Array.isArray(d.agenda) ? d.agenda : []) {
             if (!r || typeof r.key !== 'string' || typeof r.what !== 'string') continue;
-            let it = find(r.key, r);
+            const dueAt = r.when || r.due ? agendaWhen(r.due, r.when, at, e && e.hud) : null;
+            let it = find(r.key, r, dueAt);
             if (!it) {
-                const key = items.some(x => x.key === r.key) ? `${r.key} :: ${lockKey(r.with || '')} :: ${lockKey(r.where || '')}` : r.key;
+                if (!r.with && !r.where && !r.when && !r.due && items.some(x => agendaSame(lockKey(x.what), r.key))) continue;
+                const key = agendaItemKey(items, r);
                 it = { key, what: r.what, with: null, where: null, when: null, dueAt: null, kind: r.kind, state: 'open', madeAt: at, msgId: m.id, idx, from: 'story', changedIn: m.id, history: [] }; items.push(it); }
             if (r.with) it.with = r.with;
             if (r.where) it.where = r.where;
-            if (r.when || r.due) { const v = agendaWhen(r.due, r.when, at, e && e.hud); if (r.when) it.when = r.when; if (v !== null) it.dueAt = v; else if (r.due) it.when = r.when || r.due; }
+            if (r.when || r.due) { if (r.when) it.when = r.when; if (dueAt !== null) it.dueAt = dueAt; else if (r.due) it.when = r.when || r.due; }
             if (r.kind) it.kind = r.kind;
             if (r.state !== it.state) it.history.push({ from: it.state, to: r.state, at });
             it.state = r.state; it.idx = idx; it.changedIn = m.id;
@@ -12740,9 +12771,10 @@ function agendaRead(chat, st) {
     }
     for (const a of Array.isArray(g.added) ? g.added : []) {
         if (!a || !a.what) continue;
-        const key = lockKey(a.what);
-        if (find(key)) continue;
-        items.push({ key, what: a.what, with: a.with || null, where: a.where || null, when: a.when || null, dueAt: agendaWhen(null, a.when, a.at ?? now, tl.length ? tl[tl.length - 1].hud : null), kind: a.kind || 'promise', state: 'open', madeAt: a.at ?? null, msgId: null, idx: -1, from: 'you', changedIn: null, history: [] });
+        const dueAt = agendaWhen(null, a.when, a.at ?? now, tl.length ? tl[tl.length - 1].hud : null);
+        if (find(lockKey(a.what), a, dueAt)) continue;
+        const key = agendaItemKey(items, a);
+        items.push({ key, what: a.what, with: a.with || null, where: a.where || null, when: a.when || null, dueAt, kind: a.kind || 'promise', state: 'open', madeAt: a.at ?? null, msgId: null, idx: -1, from: 'you', changedIn: null, history: [] });
     }
     const edits = isPlainObject(g.edits) ? g.edits : {};
     for (const [k, ed] of Object.entries(edits)) {
@@ -12797,12 +12829,16 @@ async function hmsAgendaEdit(chatId, p) {
     if (p.op === 'add') {
         if (!what) return;
         const tl = hmsTimeline(chat);
-        if (!g.added.some(a => lockKey(a.what) === key)) g.added.push({ what, with: partyText(p.with, 60), where: partyText(p.where, 80), when: partyText(p.when, 60), kind: AGENDA_KINDS.includes(p.kind) ? p.kind : 'promise', at: tl.length ? tl[tl.length - 1].clock : null });
+        const row = { what, with: partyText(p.with, 60), where: partyText(p.where, 80), when: partyText(p.when, 60), kind: AGENDA_KINDS.includes(p.kind) ? p.kind : 'promise', at: tl.length ? tl[tl.length - 1].clock : null };
+        if (!g.added.some(a => lockKey(a.what) === key && ['with', 'where', 'when'].every(f => lockKey(a[f] || '') === lockKey(row[f] || '')))) {
+            row.key = agendaItemKey(g.added, { ...row, key: `manual :: ${key} :: ${lockKey(row.with || '')} :: ${lockKey(row.where || '')} :: ${lockKey(row.when || '')}` });
+            g.added.push(row);
+        }
         if (g.added.length > 60) g.added = g.added.slice(-60);
     } else if (p.op === 'set') {
         const s = String(p.state || '');
         if (![...AGENDA_STATES, 'removed'].includes(s)) return;
-        if (s === 'removed') g.added = g.added.filter(a => lockKey(a.what) !== key);
+        if (s === 'removed') g.added = g.added.filter(a => (a.key || lockKey(a.what)) !== key);
         g.edits[key] = { state: s, after: latest ? latest.id : null };
     }
     await saveChatState(chatId, st);
@@ -13293,6 +13329,14 @@ function secretCfg(cfg) {
     const c = (cfg || hmsCfg()).secrets || {};
     return { on: c.enabled !== false, ask: c.askStory !== false, tell: c.tellModel !== false };
 }
+function secretOwnerKey(whose, mine = false, userName = null) {
+    const owner = partyText(whose, 60);
+    return mine || !owner || /^(user|you|me|player|\{\{user\}\})$/i.test(owner) || (userName && relSameWords(owner, userName))
+        ? 'user' : lockKey(owner);
+}
+function secretRecordKey(text, whose, mine = false, userName = null) {
+    return `${lockKey(text)} :: owner ${secretOwnerKey(whose, mine, userName)}`;
+}
 function secretNormalize(list, userName = null) {
     if (!Array.isArray(list)) return null;
     const out = [];
@@ -13300,9 +13344,9 @@ function secretNormalize(list, userName = null) {
         if (!isPlainObject(e)) continue;
         const text = partyText(e.secret ?? e.text ?? e.what, 140);
         if (!text) continue;
-        const key = lockKey(text);
-        if (!key || out.some(x => x.key === key)) continue;
         const whose = partyText(e.whose ?? e.owner, 60);
+        const key = secretRecordKey(text, whose, false, userName);
+        if (out.some(x => x.key === key)) continue;
         const kb = Array.isArray(e.known_by ?? e.knownBy) ? (e.known_by ?? e.knownBy) : typeof (e.known_by ?? e.knownBy) === 'string' ? String(e.known_by ?? e.knownBy).split(/,|\band\b/) : [];
         out.push({ key, text, whose: whose || 'user', mine: !whose || /^(user|you|me|player|\{\{user\}\})$/i.test(whose) || (userName && relSameWords(whose, userName)),
             knownBy: kb.map(x => partyText(x, 50)).filter(Boolean).slice(0, 10), how: partyText(e.how, 140) });
@@ -13318,7 +13362,17 @@ function secretRead(chat, st, userName = null) {
     const lastId = msgs.length ? msgs[msgs.length - 1].id : null;
     const list = [];
     const same = (a, b) => { if (a === b) return true; const w = (x) => new Set(x.split(/\s+/).filter(t => t.length > 3)); const A = w(a), B = w(b); let n = 0; for (const t of A) if (B.has(t)) n++; return n >= 3 && n >= Math.min(A.size, B.size) * 0.6; };
-    const ensure = (text, whose, mine, from) => { const k = lockKey(text); let it = list.find(x => same(x.key, k)); if (!it) { it = { key: k, text, whose, mine, knownBy: new Map(), from, changedIn: null }; list.push(it); } return it; };
+    const ensure = (text, whose, mine, from) => {
+        const descriptionKey = lockKey(text), ownerKey = secretOwnerKey(whose, mine, userName);
+        let it = list.find(x => x.ownerKey === ownerKey && same(x.descriptionKey, descriptionKey));
+        if (!it) {
+            const collision = list.find(x => x.descriptionKey === descriptionKey);
+            if (collision) collision.key = secretRecordKey(collision.text, collision.whose, collision.mine, userName);
+            it = { key: collision ? secretRecordKey(text, whose, mine, userName) : descriptionKey, descriptionKey, ownerKey, text, whose, mine, knownBy: new Map(), from, changedIn: null };
+            list.push(it);
+        }
+        return it;
+    };
     const isUser = (n) => !!n && (/^(user|you|me|player)$/i.test(n) || (userName && relSameWords(n, userName)));
     for (const m of msgs) {
         const d = getSwipeData(m) || {};
@@ -13332,7 +13386,9 @@ function secretRead(chat, st, userName = null) {
     for (const a of Array.isArray(g.added) ? g.added : []) if (a && a.text) { const it = ensure(a.text, a.whose || 'user', a.whose ? false : true, 'you'); for (const n of a.knownBy || []) if (!it.knownBy.has(lockKey(n))) it.knownBy.set(lockKey(n), { name: n, how: 'set by you', at: null }); }
     const edits = isPlainObject(g.edits) ? g.edits : {};
     for (const [k, ed] of Object.entries(edits)) {
-        const it = list.find(x => x.key === k || same(x.key, k));
+        const exact = list.find(x => x.key === k);
+        const legacy = exact || k.includes(' :: owner ') ? [] : list.filter(x => same(x.descriptionKey, k));
+        const it = exact || (legacy.length === 1 ? legacy[0] : null);
         if (!it || !ed) continue;
         if (ed.removed) { it.removed = true; continue; }
         for (const n of ed.addKnows || []) if (!it.knownBy.has(lockKey(n))) it.knownBy.set(lockKey(n), { name: n, how: 'set by you', at: null });
@@ -13372,7 +13428,9 @@ async function hmsSecretsEdit(chatId, p) {
     const names = (v) => String(v || '').split(',').map(x => partyText(x, 50)).filter(Boolean).slice(0, 10);
     if (p.op === 'add') {
         if (!text) return;
-        if (!g.added.some(a => lockKey(a.text) === key)) g.added.push({ text, whose: partyText(p.whose, 60), knownBy: names(p.knownBy) });
+        const whose = partyText(p.whose, 60);
+        const recordKey = secretRecordKey(text, whose);
+        if (!g.added.some(a => secretRecordKey(a.text, a.whose) === recordKey)) g.added.push({ text, whose, knownBy: names(p.knownBy) });
         delete g.edits[key];
     } else if (p.op === 'knows') {
         const ed = g.edits[key] || (g.edits[key] = {});
@@ -13383,7 +13441,9 @@ async function hmsSecretsEdit(chatId, p) {
         ed.forget = [...new Set([...(ed.forget || []), ...names(p.name)])];
         ed.addKnows = (ed.addKnows || []).filter(n => !names(p.name).some(x => lockKey(x) === lockKey(n)));
     } else if (p.op === 'remove') {
-        g.added = g.added.filter(a => lockKey(a.text) !== key);
+        const exact = g.added.some(a => secretRecordKey(a.text, a.whose) === key);
+        const legacyCount = exact ? 0 : g.added.filter(a => lockKey(a.text) === key).length;
+        g.added = g.added.filter(a => exact ? secretRecordKey(a.text, a.whose) !== key : legacyCount !== 1 || lockKey(a.text) !== key);
         g.edits[key] = { removed: true };
     }
     await saveChatState(chatId, st);
@@ -16711,3 +16771,4 @@ spindle.onFrontendMessage(async (payload, userId) => {
     });
     spindle.log.info('[RPG Companion HMS] Backend loaded.');
 })();
+
