@@ -1,3 +1,10 @@
+## 2.8.19 — Visual HUD and rank parsing repairs
+
+- Split magic schools and sword styles on top-level middots, commas and semicolons. Preserve ranks, unknown ranks, parenthetical qualifiers and Shown/True distinctions. Fix the empty eligible-spell filter caused by a combined school name.
+- Keep Touki descriptions together when they contain commas, middots or slashes; retain existing parenthetical state handling.
+- Display Visual WORLD STATE replies in their original Markdown format, including icons, bold labels and dividers, instead of replacing them with the generic HUD card. Classic HUD cards remain supported. Split Classic card chips only outside brackets and parentheses.
+- Add the exact reported Visual HUD as a regression case. Verify sword-style formats and spell study, learning, mastery, forgetting, relearning and active-swipe rollback against the updated-card catalog. No automatic spell grants, extra model calls, save migration or character-card changes.
+
 ## 2.8.18 — Updated Six-Sided World compatibility
 
 - Read the unchanged updated card’s Classic and Visual WORLD STATE formats, including globe headers, icons, bold labels/locations, middot field separators, decorative dividers and indented checkpoints. Preserve original message text, selected style and Visual pin/repair formatting.

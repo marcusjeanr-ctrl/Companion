@@ -2341,7 +2341,7 @@ async function pushState(chatId, snapshot = null) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.18';
+const RPGC_VERSION = '2.8.19';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -3141,11 +3141,11 @@ function hudCardValue(label, value) {
             return `<span class="rh-bar${pct <= 15 ? ' crit' : pct <= 40 ? ' low' : ''}" aria-hidden="true"><span class="f" style="width:${pct}%"></span></span>${escapeHtml(v)}`;
         }
     }
-    const dot = v.split(/\s+·\s+/);
+    const dot = hmsSplitTop(v, /\s+·\s+/g);
     if (dot.length >= 3) return `<span class="rh-chips">${dot.map(x => `<span class="rh-chip">${escapeHtml(x)}</span>`).join('')}</span>`;
     // a list of short items under a list-like label ("Equipment: Student phone, School uniform")
     if (HUD_LIST_LABEL_RE.test(label || '') && /,\s/.test(v) && !/\d,\d/.test(v)) {
-        const parts = v.split(/,\s+/);
+        const parts = hmsSplitTop(v, /,\s+/g);
         if (parts.length >= 2 && parts.length <= 14 && parts.every(p => p.length <= 48 && !/[.;!?]$/.test(p))) {
             return `<span class="rh-chips">${parts.map(x => `<span class="rh-chip">${escapeHtml(x)}</span>`).join('')}</span>`;
         }
@@ -3260,6 +3260,7 @@ function renderHudCard(text, cfg = chatDisplayCfg()) {
     if (!f || f.fromHtml || !f.sepFound) return text;             // still streaming, or a HUD written as HTML
     const hud = parseHud(text);
     if (!hud) return text;
+    if (hud.style === 'visual') return text;
     let end = text.indexOf('\n', f.bodyEnd);
     end = end === -1 ? text.length : end + 1;                   // through the *** line
     const raw = text.slice(f.headStart, end).replace(/\s+$/, '');
@@ -6575,7 +6576,7 @@ function mtPowerViews(text) {
     return { shown: m ? m[1].trim() : null, actual: (m ? m[2] : t).split(/\s*\|\s*(?:Reserve|Status):/i)[0].trim() };
 }
 function mtRankRows(text, ranks) {
-    return mtPowerViews(text).actual.split(/\s*[,;]\s*/).map(part => {
+    return hmsSplitTop(mtPowerViews(text).actual, /\s*[,;·]\s*/g).map(part => {
         const m = part.match(/^(.+?)\s*:\s*(.+)$/) || part.match(/^(.+?)\s*\(([^)]+)\)$/) || part.match(/^(.+?)\s+[—–-]\s+(.+)$/);
         if (!m) return null;
         const rank = ranks.find(x => new RegExp(`\\b${x}\\b`, 'i').test(m[2])) || (/beginner/i.test(m[2]) ? ranks[0] : null);
@@ -10984,8 +10985,8 @@ function hmsParseVocab(text) {
     return cats;
 }
 
-function hmsItemsOf(value) {
-    return hmsSplitTop(value, /\s*(?:,|\s·\s|\s\/\s)\s*/g).map(raw => {
+function hmsItemsOf(value, split = true) {
+    return (split ? hmsSplitTop(value, /\s*(?:,|\s·\s|\s\/\s)\s*/g) : [String(value || '').trim()]).map(raw => {
         let name = raw, state = null, level = null;
         const sm = name.match(/^(.*\S)\s*\(([^()]*)\)\s*$/);
         if (sm) { name = sm[1]; state = sm[2].trim(); }
@@ -11069,7 +11070,8 @@ function hmsReadAbilities(hud, cfg) {
             if (/^[\d,.\s]+$/.test(value)) continue;   // "Job Lvl: 70" is a number, not an ability
             const lbl = f.label.replace(/^[^\p{L}\p{N}]+/u, '').trim();
             const showLabel = hmsSing(lbl) !== hmsSing(cat.name) ? lbl : null;
-            for (const it of hmsItemsOf(value)) add(cat.name, { ...it, state: [it.state, status].filter(Boolean).join(' · ') || null, label: showLabel, lineKey: l.key, src: lbl.toUpperCase() });
+            const items = hmsItemsOf(value, !/^Touki(?: \(Battle Aura\))?$/i.test(lbl));
+            for (const it of items) add(cat.name, { ...it, state: [it.state, status].filter(Boolean).join(' · ') || null, label: showLabel, lineKey: l.key, src: lbl.toUpperCase() });
         }
     }
     return [...cats.filter(c => groups.has(c.name)).map(c => ({ category: c.name, items: groups.get(c.name) })), ...(groups.has('Modifiers') ? [{category:'Modifiers',items:groups.get('Modifiers')}] : [])];
