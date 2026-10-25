@@ -10,7 +10,13 @@ const code = [
  section('const WORLD_LABEL =', '// ── Expansions read from the bots'),
  section('const MT_ABBR =', '/** The panel payload for the world card'),
  section('/** In-world minutes from the HUD', 'function hmsSpan('),
+ section('const ATLAS_TIER_RE =', '// ───────────────────────────── Positions and the room map'),
  section('function spellStanding(lines)', '/** What the story reports'),
+ section('function spellStoryFold(chat)', '/** The spell list for the Magic card'),
+ section('function plotCfg()', 'function objectivesNormalize(list)'),
+ section('const FAM_KIN_RE =', '/** Everyone in the family'),
+ section('const GEAR_STATES =', 'function hmsGearPanel('),
+ section('function gearRequest(chat,', 'async function hmsGearEdit('),
  'const SPELL_MT_WORDS = {beginner:0,basic:0,elementary:0,elem:0,intermediate:1,advanced:2,saint:3,king:4,emperor:5,imperial:5,god:6,divine:6};',
  'function spellMtStep(s) { const m=String(s).toLowerCase().match(/\\b(beginner|basic|elementary|elem|intermediate|advanced|saint|king|emperor|imperial|god|divine)\\b/); return m ? SPELL_MT_WORDS[m[1]] : null; }',
  'function spellSchoolKey(s) { return String(s).toLowerCase(); }',
@@ -18,11 +24,26 @@ const code = [
  'function lockKey(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g," ").trim(); }',
  'function hudFieldsFixed(s) { return s; }',
  'function hmsMarkBlocks() {}',
+ 'function hmsCfg() { return {quests:{},gear:{}}; }',
+ 'function hmsFieldsOf(l) { return l.fields || []; }',
+ 'function hmsLabelIn(label,list) { return list.some(x => label.toLowerCase()===x.toLowerCase()); }',
+ 'function relSameWords(a,b) { return String(a).toLowerCase() === String(b).toLowerCase(); }',
+ 'function hmsTimeline(chat) { return chat.filter(m => m.hud).map(m => ({msg:m,hud:m.hud,clock:100})); }',
+ 'function relReadings(chat) { return chat.filter(m => m.role === "assistant"); }',
+ 'function pocketIsMessage() { return false; }',
  'function worldLore() { return null; }',
  'function worldSpellIndex() { return null; }',
  'function spellIndexFromCatalog() { return null; }',
  'function getLorePool() { return entries; }',
  'function isPlainObject(x) { return x && typeof x === "object" && !Array.isArray(x); }',
+ 'function immText(s,n) { return typeof s === "string" ? s.slice(0,n) : null; }',
+ 'function partyText(s,n) { return typeof s === "string" ? s.slice(0,n) : null; }',
+ 'function getSwipeData(m) { return m.metadata?.rpg_companion?.swipes?.[String(m.swipe_id ?? 0)] || m.data || null; }',
+ 'function spellKey(s) { return lockKey(s); }',
+ 'function textOf(s) { return s; }',
+ 'const lorePool = new Map(), LORE_POOL_MAX_CHATS = 10;',
+ 'function logW() {}',
+ 'const FAM_STATUS = ["alive","missing","dead","unknown"], FAM_KNOWN = ["seen","told","guess"];',
  'const SPELL_ELEMENTS = /water|earth|fire|wind/i;',
  'const entries = [];',
  'function hmsClockTest(h) { return hmsClock(h); }',
@@ -35,6 +56,14 @@ const h6 = ctx.parseHud(six), hl = ctx.parseHud(living);
 assert.deepEqual(Array.from(h6.location), ['Central Continent','Asura Kingdom','Fittoa Region','House King Estate','Training Yard']);
 assert.equal(ctx.worldOf(ctx.worldLines(h6)), 'mushoku');
 assert.equal(ctx.worldOf(ctx.worldLines(hl)), 'mushoku');
+for (const [id, sample] of [
+ ['rezero','Deaths: 0 | Witch\'s Scent: Faint\nLocation: World of Re:Zero → Lugunica'],
+ ['overlord','Overall Lvl: 100 | Racial Lvl: 40\nKarma: -500\nLocation: Great Tomb of Nazarick'],
+ ['cote','Cohort: 1-D\nStandings: 50\nPrivate Points: 1000\nLocation: The ANHS Program'],
+ ['undertale','LV: 1\nSOUL: Red\nRoute: Neutral\nLocation: Snowdin'],
+ ['darksouls','Souls: 1234\nEstus: 5\nBonfire: Firelink Shrine'],
+ ['skyrim','Magicka: 100\nDragon Souls: 1\nShouts: Unrelenting Force\nLocation: Whiterun, Skyrim']
+]) assert.equal(ctx.worldOf(ctx.worldLines(ctx.parseHud(`### WORLD STATE ###\n${sample}\n***\nScene.`))),id);
 const w6=ctx.worldMushoku('test',ctx.worldLines(h6),{}), wl=ctx.worldMushoku('test',ctx.worldLines(hl),{});
 assert.equal(w6.year,417); assert.equal(w6.month,2); assert.equal(w6.day,8);
 assert.equal(w6.birth,404); assert.equal(w6.birthMonth,2); assert.equal(w6.age,13);
@@ -49,7 +78,45 @@ assert.equal(wl.saga.participation,'explicit');
 assert.equal(ctx.hmsClockTest(h6).dated,true);
 const later=ctx.parseHud(six.replace('Day 8','Day 9'));
 assert.equal(ctx.hmsClockTest(later).minutes-ctx.hmsClockTest(h6).minutes,1440);
+const monthEnd=ctx.parseHud(six.replace('Day 8','Day 30'));
+const nextMonth=ctx.parseHud(six.replace('Thawmoon (Month 2), Day 8','Seedwake (Month 3), Day 1'));
+assert.equal(ctx.hmsClockTest(nextMonth).minutes-ctx.hmsClockTest(monthEnd).minutes,1440);
+const comma=ctx.parseHud(six.replace('Asura Kingdom → Fittoa Region → House King Estate → Training Yard','Asura Kingdom, Fittoa Region → House King Estate, Training Yard'));
+assert.deepEqual(Array.from(comma.location),Array.from(h6.location));
+const atlas=ctx.atlasFor('test',comma.location);
+assert(atlas && atlas.nodes.size===5);
+assert.equal(ctx.atlasLocate(atlas,comma.location).past.length,0);
+ctx.atlasFor('test',ctx.parseHud(six.replace('Training Yard','Kitchen')).location);
+assert.equal(atlas.nodes.size,6);
+assert.equal([...atlas.nodes.values()].filter(n=>n.name==='House King Estate').length,1);
+assert.equal(ctx.atlasFor('other',['World of Re:Zero','Lugunica']),null);
+const story=[{id:'m1',role:'assistant',data:{survival:{learned:['Water Ball'],study:[{spell:'Water Ball',progress:null}]},plot:{canonEvents:[{name:'Mana Calamity',state:'changed',detail:'Fittoa remained intact',arc:3}]}}},
+ {id:'m2',role:'assistant',data:{survival:{mastered:['Water Ball']}}}];
+const fold=ctx.spellStoryFold(story);
+assert.equal(fold.progress.get('water ball').progress,null);
+assert(fold.mastered.has('water ball'));
+assert.equal(ctx.spellKnown(story,{spellbook:[{name:'Unlearned Menu Spell',from:'fight'}]},fold).has('unlearned menu spell'),false);
+assert.equal(ctx.spellKnown(story,{},fold).has('water ball'),true);
+assert.equal(ctx.spellSame('water ball','water ball storm'),false);
+assert.equal(ctx.mtEventLedger(story)[0].state,'changed');
+const swiped={id:'s1',role:'assistant',swipe_id:1,metadata:{rpg_companion:{swipes:{'0':{plot:{canonEvents:[{name:'Mana Calamity',state:'occurred',detail:'Old swipe'}]}},'1':{plot:{canonEvents:[{name:'Mana Calamity',state:'prevented',detail:'Active swipe'}]}}}}}};
+assert.equal(ctx.mtEventLedger([swiped])[0].state,'prevented');
+assert.equal(ctx.plotNormalize({canonEvents:[{name:'Rumor',state:'predicted',detail:'maybe'}]}),null);
+assert.equal(ctx.famNormalize([{name:'Aldous',relation:'teacher'},{name:'Seraphina',relation:'mother'}]).length,1);
+assert.equal(ctx.gearState('wielding'),'in hand');
+assert.equal(ctx.gearState('stored in the room'),'stowed');
+assert.equal(ctx.gearNormalize([{item:'Roxy wand',state:'in hand'},{item:'Estate sword',state:'nearby'}]).length,1);
+const gearHud={lines:[{kind:'field',fields:[{label:'Equipment',value:'Longsword (sheathed), Backpack [rope, rations]'}]}]};
+assert.equal(ctx.gearFromHud(gearHud).length,2);
+const gearChat=[{id:'g0',role:'assistant',hud:gearHud,data:{}},{id:'g1',role:'assistant',data:{gear:[{name:'Longsword',state:'in hand'}]}}];
+const gearNow=ctx.gearRead(gearChat,{},{}).items;
+assert.equal(gearNow.find(x=>x.name==='Longsword').state,'in hand');
+assert.equal(gearNow.find(x=>x.name==='rope').inside,'Backpack');
+assert.equal(gearNow.find(x=>x.name==='Backpack').onHud,true);
+assert(!ctx.gearRequest(gearChat,{},'Marcus',{gear:{enabled:false}}));
+assert(ctx.plotRequest('Marcus',true).rules.includes('Another character proposing'));
+assert(!ctx.plotRequest('Marcus',false).json.includes('canonEvents'));
 evalExpr('entries').push(...arcEntries);
 assert.equal(ctx.mtArcList('test').length,22);
 assert.equal(ctx.mtArcList('test').find(x=>x.no===3).year,417);
-console.log('Compatibility assertions passed: Six-Sided HUD, Living World HUD, calendar, ranks, casting, saga, and 22 lorebook arcs.');
+console.log('Compatibility assertions passed: both HUDs, 30-day calendar, Atlas, spells, family, saga ledger, objectives, gear, and 22 lorebook arcs.');

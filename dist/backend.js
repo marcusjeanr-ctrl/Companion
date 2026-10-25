@@ -2217,7 +2217,7 @@ async function pushState(chatId) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.2-beta';
+const RPGC_VERSION = '2.8.3-rc.1';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -3788,18 +3788,56 @@ function atlasSurvLevel(text) {
     return 'unknown';
 }
 
-function atlasFor(chatId) {
-    const p = lorePool.get(chatId);
-    if (!p || !Array.isArray(p.entries) || !p.entries.length) return null;
-    const c = atlasCache.get(chatId);
-    if (c && c.at === p.at && c.n === p.entries.length) return c.atlas;
-    let atlas = null;
-    try { atlas = atlasBuild(p.entries); } catch (e) { logW(`[RPG Companion HMS] Could not read the location book: ${e?.message || e}`); }
-    if (atlas) {
-        atlas.version = `${p.at}-${atlas.nodes.size}`;
-        atlas.ix = new Map([...atlas.nodes.keys()].map((id, i) => [id, i]));      // short ids for the panel
+function atlasAddMushokuPath(atlas, segments) {
+    if (!atlas || !Array.isArray(segments) || !segments.length ||
+        !segments.some(s => /^(?:Six-Faced World|Central Continent)$/i.test(String(s).trim())) ||
+        !segments.some(s => /^Asura Kingdom$|^Fittoa Region$|^Demon Continent$/i.test(String(s).trim()))) return false;
+    let parent = null, changed = false;
+    for (const raw of mushokuLocationSegments(segments).slice(0, 12)) {
+        const seg = atlasSeg(raw);
+        if (!seg.name || /^\[.*\]$/.test(raw) || /^\(.*\)$/.test(raw)) continue;
+        const candidates = parent === null ? [...atlas.nodes.values()] :
+            (atlas.nodes.get(parent)?.children || []).map(id => atlas.nodes.get(id)).filter(Boolean);
+        let node = candidates.find(n => (n.alts || [n.name]).some(a => atlasNorm(a) === atlasNorm(seg.name)));
+        if (!node) {
+            const id = lockKey(`${parent || ''} > ${atlasNorm(seg.name)}`);
+            node = atlas.nodes.get(id);
+            if (!node) {
+                node = { id, name: seg.name, alts: seg.alts, keys: [], parent, children: [], tier: parent ? (atlas.nodes.get(parent)?.tier || 0) + 1 : 0,
+                    kind: 'Observed location', flags: [], level: null, stub: true, summary: '', meta: {}, extra: {}, nav: [], anchors: [], linked: [], walls: '', surv: null, generic: false };
+                atlas.nodes.set(id, node);
+                if (parent === null) atlas.roots.push(id); else atlas.nodes.get(parent).children.push(id);
+                changed = true;
+            }
+        }
+        parent = node.id;
     }
-    atlasCache.set(chatId, { at: p.at, n: p.entries.length, atlas });
+    if (changed) {
+        atlas.version = `${atlas.baseVersion}-${atlas.nodes.size}`;
+        atlas.ix = new Map([...atlas.nodes.keys()].map((id, i) => [id, i]));
+    }
+    return changed;
+}
+
+function atlasFor(chatId, segments = null) {
+    const p = lorePool.get(chatId);
+    const entries = p && Array.isArray(p.entries) ? p.entries : [];
+    const c = atlasCache.get(chatId);
+    if (c && c.at === (p?.at ?? null) && c.n === entries.length && (c.atlas || !segments)) {
+        if (segments) atlasAddMushokuPath(c.atlas, segments);
+        return c.atlas;
+    }
+    let atlas = null;
+    try { if (entries.length) atlas = atlasBuild(entries); } catch (e) { logW(`[RPG Companion HMS] Could not read the location book: ${e?.message || e}`); }
+    if (!atlas && segments) atlas = { nodes: new Map(), roots: [] };
+    if (atlas) {
+        atlas.baseVersion = `${p?.at ?? 'hud'}-${atlas.nodes.size}`;
+        atlas.version = atlas.baseVersion;
+        atlas.ix = new Map([...atlas.nodes.keys()].map((id, i) => [id, i]));      // short ids for the panel
+        if (segments) atlasAddMushokuPath(atlas, segments);
+        if (!atlas.nodes.size) atlas = null;
+    }
+    atlasCache.set(chatId, { at: p?.at ?? null, n: entries.length, atlas });
     while (atlasCache.size > LORE_POOL_MAX_CHATS) atlasCache.delete(atlasCache.keys().next().value);
     return atlas;
 }
@@ -3836,9 +3874,13 @@ function atlasLocate(atlas, segments) {
 }
 
 /** The small part every panel state carries: where you are in the book, and the book's version. */
-function atlasHereInfo(chatId, hud) {
-    const atlas = atlasFor(chatId);
+function atlasHereInfo(chatId, hud, chat = null) {
+    const atlas = atlasFor(chatId, hud && hud.location);
     if (!atlas) return null;
+    if (Array.isArray(chat)) for (const m of chat.filter(x => x.role === 'assistant').slice(-100)) {
+        const prior = parseHud(textOf(m.content));
+        if (prior && prior.location) atlasAddMushokuPath(atlas, prior.location);
+    }
     const here = hud && hud.location ? atlasLocate(atlas, hud.location) : null;
     const trail = [];
     let n = here ? atlas.nodes.get(here.id) : null;
@@ -6146,6 +6188,23 @@ const HUD_HEAD_RE = /^[ \t]*(?:\*\*)?[ \t]*(?:#{1,6}[ \t]*)?WORLD STATE[ \t]*(?:
 const HUD_SEP_RE = /^[ \t]*(?:\*[ \t]*){3,}$|^[ \t]*(?:-[ \t]*){3,}$|^[ \t]*(?:_[ \t]*){3,}$/;
 const LOC_MARK_RE = /^[◆◇⌖►▶•]/;
 const LOC_ARROW_RE = /\s*(?:→|⟶|➜|›|»)\s*/;
+function mushokuLocationSegments(segments) {
+    if (!Array.isArray(segments)) return [];
+    // Six-Sided combines geographic levels and rooms with commas. Respect brackets and
+    // parentheses so a qualifier is never mistaken for another location.
+    const out = [];
+    for (const segment of segments) {
+        let depth = 0, current = '';
+        for (const ch of String(segment)) {
+            if (ch === '(' || ch === '[') depth++;
+            else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
+            if (ch === ',' && depth === 0) { if (current.trim()) out.push(current.trim()); current = ''; }
+            else current += ch;
+        }
+        if (current.trim()) out.push(current.trim());
+    }
+    return out;
+}
 // "Location: ◆ World → Region → Place" (Mushoku Tensei and others label the path): the label is not a segment.
 const LOC_LABEL_RE = /^(?:\*\*)?(?:current\s+)?(?:location|place|where)(?:\*\*)?\s*:(?:\*\*)?\s*(?=[◆◇⌖►▶•]|[^:\n]*(?:→|⟶|➜))/i;
 const COMPANION_RE = /<rpg_companion>\s*([\s\S]*?)\s*<\/rpg_companion>/i;
@@ -6333,7 +6392,10 @@ function parseHud(text) {
         return m ? { name: m[1].trim(), state: m[2].trim().toLowerCase() } : { name: q, state: null };
     }) : null;
     hmsMarkBlocks(lines);
-    return { lines, find: f, time, location: loc ? loc.segments : null, arc: arcText, quests };
+    const location = loc ? loc.segments : null;
+    const mushoku = lines.some(l => /^(?:Armored Dragon Calendar:\s*K|Year:\s*K\.?\s*\d+)/i.test(l.text)) &&
+        lines.some(l => /^(?:Magic Tiers|Magic School|Mana Capacity|Sword Style|Martial Style):/i.test(l.text));
+    return { lines, find: f, time, location: mushoku && location ? mushokuLocationSegments(location) : location, arc: arcText, quests };
 }
 
 /**
@@ -8897,7 +8959,7 @@ function mtSaga(chatId, year, arcLine, date = null) {
         next: next ? { no: next.no, title: next.title, year: next.year, inYears: next.year - year } : null };
 }
 
-function worldMushoku(chatId, lines, st) {
+function worldMushoku(chatId, lines, st, chat = null) {
     const dragon = worldFind(lines, /^Armored Dragon Calendar:\s*K\.?\s*(\d{3,4})\s*,\s*([^,|]+?)\s*\(Month\s*(\d{1,2})\)\s*,\s*Day\s*(\d{1,2})/i);
     const yr = worldFind(lines, /^Year:\s*K\.?\s*(\d+)\s*\|\s*Day:\s*(\d+)(?:\s*\|\s*Time:\s*([\d:]+)\s*(?:\(([^)]+)\))?)?/i);
     const date = dragon ? { year: Number(dragon[1]), month: Number(dragon[3]), monthName: dragon[2].trim(), day: Number(dragon[4]) } : yr ? { year: Number(yr[1]), month: null, monthName: null, day: Number(yr[2]) } : null;
@@ -8952,7 +9014,7 @@ function worldMushoku(chatId, lines, st) {
         drain: (() => { const m = worldFind(lines, /^Drain Syndrome:\s*([^|]+?)(?:\s*\|\s*Onset:\s*(.+))?$/i); return m ? { stage: m[1].trim(), onset: m[2] ? m[2].trim() : null } : null; })(),
         term: (() => { const m = worldFind(lines, /^Term:\s*(.+?)\s*\|\s*Role:\s*(.+)$/i); return m ? { term: m[1].trim(), role: m[2].trim() } : null; })(),
         hitogami: hg ? { state: hg[1].trim(), dreams: dreams ? Number(dreams) : null } : null,
-        saga: (() => { try { const saga = mtSaga(chatId, date ? date.year : null, one(/^(?:Current )?Arc:\s*(.+)$/i), date); if (saga) saga.canonMode = one(/^Canon:\s*([^|]+)/i); return saga; } catch { return null; } })(),
+        saga: (() => { try { const saga = mtSaga(chatId, date ? date.year : null, one(/^(?:Current )?Arc:\s*(.+)$/i), date); if (saga) { saga.canonMode = one(/^Canon:\s*([^|]+)/i); saga.events = chat ? mtEventLedger(chat) : []; } return saga; } catch { return null; } })(),
         advice: (Array.isArray(w.advice) ? w.advice : []).slice(-12).reverse()
     };
 }
@@ -8983,7 +9045,7 @@ function worldPanel(chatId, chat, st) {
     if (id === 'rezero') Object.assign(out, worldReZero(chatId, lines, st));
     else if (id === 'overlord') Object.assign(out, worldOverlordFull(chatId, lines));
     else if (id === 'cote') Object.assign(out, worldCote(chatId, lines, st, prevLines, chat));
-    else if (id === 'mushoku') Object.assign(out, worldMushoku(chatId, lines, st));
+    else if (id === 'mushoku') Object.assign(out, worldMushoku(chatId, lines, st, chat));
     else if (id === 'undertale') Object.assign(out, worldUndertale(chatId, lines));
     else if (id === 'darksouls') Object.assign(out, worldDarkSouls(chatId, lines));
     else if (id === 'skyrim') Object.assign(out, worldSkyrim(chatId, lines));
@@ -9309,6 +9371,7 @@ function parseCompanion(text, roster = [], relSt = null, immSt = null) {
             xp: Number.isFinite(xp) && xp > 0 ? Math.min(100000, Math.round(xp)) : 0, xpWhy: partyText(y.xpWhy, 100),
             spells: Array.isArray(y.spells) ? y.spells.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim().slice(0, 60)).slice(0, 8) : [],
             learned: Array.isArray(y.learned) ? y.learned.map(x => (typeof x === 'string' ? x : isPlainObject(x) ? x.name || x.spell : '')).filter(x => typeof x === 'string' && x.trim() && !/^(none|null|n\/a)$/i.test(x.trim())).map(x => x.trim().slice(0, 60)).slice(0, 6) : [],
+            mastered: Array.isArray(y.mastered) ? y.mastered.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim().slice(0, 60)).slice(0, 6) : [],
             study: Array.isArray(y.study) ? y.study.filter(x => isPlainObject(x) && typeof (x.spell || x.name) === 'string' && (x.spell || x.name).trim()).map(x => { const n = x.progress === null || x.progress === undefined || x.progress === '' ? NaN : Number(x.progress); return { spell: String(x.spell || x.name).trim().slice(0, 60), progress: Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null, note: partyText(x.note, 80) }; }).slice(0, 8) : [],
             got: pocketList(y.got), lost: pocketList(y.lost) };
         res.found = true;
@@ -9374,12 +9437,13 @@ function plotCfg() {
     const q = (hmsCfg().quests) || {};
     return { plot: q.enabled !== false && q.plot !== false, objectives: q.enabled !== false && q.objectives !== false };
 }
-function plotRequest(userName) {
+function plotRequest(userName, mushoku = false) {
     const c = plotCfg();
     const json = [], rules = [];
     if (c.plot) {
-        json.push('"plot": {"now": "where the main story stands, one line", "threads": [{"name": "a few words", "state": "open|advanced|resolved", "note": "one line"}]}');
+        json.push(`"plot": {"now": "where the main story stands, one line", "threads": [{"name": "a few words", "state": "open|advanced|resolved", "note": "one line"}]${mushoku ? ', "canonEvents": [{"name": "specific event", "state": "occurred|changed|prevented", "detail": "what the story established", "arc": "arc number or null"}]' : ''}}`);
         rules.push('"plot" is the story itself, not a quest: "now" says where the main story stands at the end of this reply, and "threads" are its open questions and conflicts that matter, up to six. Mark a thread advanced when this reply moved it and resolved when it closed, and keep each thread\u2019s name the same from reply to reply.');
+        if (mushoku) rules.push('"plot.canonEvents" contains only Mushoku canon events explicitly shown to occur, change, or be prevented in this reply or the player\u2019s last message. [] if none. A date, worldbook entry, prediction, rumor, or the canonical Rudeus arc does not prove an event happened to the player. Name the actual event and record its observed outcome; never overwrite an established divergence with an unobserved canon outcome.');
     }
     if (c.objectives) {
         json.push('"objectives": [{"text": "one line", "state": "active|done|failed", "quest": "quest name or null"}]');
@@ -9391,7 +9455,23 @@ function plotNormalize(p) {
     if (!isPlainObject(p)) return null;
     const now = immText(p.now, 240);
     const threads = Array.isArray(p.threads) ? p.threads.filter(isPlainObject).map(t => ({ name: immText(t.name, 60), state: ['open', 'advanced', 'resolved'].includes(t.state) ? t.state : 'open', note: immText(t.note, 200) })).filter(t => t.name).slice(0, 8) : [];
-    return now || threads.length ? { now, threads } : null;
+    const canonEvents = Array.isArray(p.canonEvents) ? p.canonEvents.filter(isPlainObject).map(e => ({
+        name: immText(e.name, 80), state: ['occurred', 'changed', 'prevented'].includes(e.state) ? e.state : null,
+        detail: immText(e.detail, 200), arc: /^\d{1,2}$/.test(String(e.arc ?? '')) ? Number(e.arc) : null
+    })).filter(e => e.name && e.state && e.detail).slice(0, 8) : [];
+    return now || threads.length || canonEvents.length ? { now, threads, canonEvents } : null;
+}
+function mtEventLedger(chat) {
+    const events = new Map();
+    for (const m of chat || []) {
+        if (m.role !== 'assistant') continue;
+        const d = getSwipeData(m);
+        for (const e of d?.plot?.canonEvents || []) if (e && e.name && e.state && e.detail) {
+            const key = lockKey(e.name);
+            if (key) events.set(key, { name: e.name, state: e.state, detail: e.detail, arc: e.arc || null, msgId: m.id });
+        }
+    }
+    return [...events.values()].slice(-30);
 }
 function objectivesNormalize(list) {
     if (!Array.isArray(list)) return null;
@@ -9534,10 +9614,12 @@ function buildCompanionInstruction(committed, userName, locks, st = null, chat =
         if (magicSeen) yf.push('"spells": ["named spells the player demonstrably learned or successfully cast this reply; never spells merely listed, demonstrated by another person, or attempted unsuccessfully"]');
         const studying = magicSeen && st && Array.isArray(st.spellStudy) ? st.spellStudy.filter(x => x && x.name).map(x => x.name).slice(0, 8) : [];
         if (studying.length) yf.push(`"learned": ["a spell ${userName} truly learned this reply: a first clean cast, or a teacher's sign-off; else leave empty"], "study": [{"spell": "one of: ${studying.join(', ')}", "progress": "number only if the story explicitly measures it; otherwise null", "note": "observed practice, or null"}]`);
+        if (magicSeen && tlNow.length && worldOf(worldLines(tlNow[tlNow.length - 1].hud)) === 'mushoku')
+            yf.push(`"mastered": ["named spell only when the story explicitly establishes reliable or exceptional mastery by ${userName}; otherwise empty"]`);
         parts.push(`"you": {${yf.join(', ')}}`);
     }
     const wantQuests = questsDetailOn();
-    const plotReq = plotRequest(userName);
+    const plotReq = plotRequest(userName, !!(tlNow.length && worldOf(worldLines(tlNow[tlNow.length - 1].hud)) === 'mushoku'));
     if (plotReq) parts.push(plotReq.json);
     const momReq = chronMomentsRequest(userName);
     if (momReq) parts.push(momReq.json);
@@ -9922,7 +10004,7 @@ function hmsPanelState(chatId, chat, st) {
         guard,
         pins,
         questNotes: st.questNotes || [],
-        atlas: (() => { try { return atlasHereInfo(chatId, hud); } catch (e) { logW(`[RPG Companion HMS] Atlas read failed: ${e?.message || e}`); return null; } })(),
+        atlas: (() => { try { return atlasHereInfo(chatId, hud, chat); } catch (e) { logW(`[RPG Companion HMS] Atlas read failed: ${e?.message || e}`); return null; } })(),
         arcCheck: (() => { try { return arcCheck(chatId, hud); } catch { return null; } })(),
         mapBank: (() => { try { if (!posCfg().bank || !hud) return null; const rooms = mapBankList(hud); const k = posRoomKey(hud); return { rooms, here: mapBankKey(hud), chatRoom: !!(k && isPlainObject(st.rooms) && st.rooms[k]) }; } catch { return null; } })(),
         ...(() => {
@@ -10094,8 +10176,8 @@ function hmsClock(hud) {
     const dragon = top.match(/Armored Dragon Calendar:\s*K\.?\s*(\d{3,4})\s*,\s*([^,|]+?)\s*\(Month\s*(\d{1,2})\)\s*,\s*Day\s*(\d{1,2})/i);
     if (dragon) {
         const year = Number(dragon[1]), month = Number(dragon[3]), day = Number(dragon[4]);
-        if (month >= 1 && month <= 12 && day >= 1 && day <= 31)
-            return { minutes: ((year * 12 + month - 1) * 31 + day - 1) * 1440 + minuteOfDay, dated: true, yearKnown: true };
+        if (month >= 1 && month <= 12 && day >= 1 && day <= 30)
+            return { minutes: ((year * 12 + month - 1) * 30 + day - 1) * 1440 + minuteOfDay, dated: true, yearKnown: true };
     }
     const mon = top.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})\b/i);
     if (mon) {
@@ -10107,7 +10189,11 @@ function hmsClock(hud) {
         return { minutes: days * 1440 + minuteOfDay, dated: true, yearKnown: !!y };
     }
     const dm = top.match(/\bDay[:\s]+(\d+)/i);
-    if (dm) return { minutes: (Number(dm[1]) - 1) * 1440 + minuteOfDay, dated: true, yearKnown: true };
+    if (dm) {
+        const k = top.match(/\bYear:\s*K\.?\s*(\d{3,4})\b/i);
+        if (k) return { minutes: (Number(k[1]) * 360 + Number(dm[1]) - 1) * 1440 + minuteOfDay, dated: true, yearKnown: true };
+        return { minutes: (Number(dm[1]) - 1) * 1440 + minuteOfDay, dated: true, yearKnown: true };
+    }
     return { minutes: minuteOfDay, dated: false, yearKnown: false };
 }
 
@@ -11927,7 +12013,7 @@ function gearRequest(chat, st, userName, cfg) {
     const gc = gearCfg(cfg);
     if (!gc.on || !gc.ask) return null;
     const json = `"gear": [{"item": "short name", "state": "${GEAR_STATES.join('|')}", "where": "where exactly, a few words, or null", "inside": "the bag, pouch or pocket it is in, or null"}]`;
-    let rules = `"gear": every change in how or where ${userName} carries a physical thing — from what ${userName} did in their own last message and from what happened in this reply: drawing or sheathing a weapon, putting on or taking off armour, clothes or a bag, putting something into a bag, pouch or pocket or taking it out, setting it down, leaving it somewhere, dropping it, handing it over, picking it up, using it up. "in hand" is held; "sheathed" is in its sheath, scabbard or holster; "on body" is slung, strapped or hung on ${userName} (back, belt, shoulder), with "where"; "in container" names the container in "inside"; "stowed" is left somewhere off ${userName}, with "where"; "gone" is given away, used up, lost or destroyed. Take what ${userName} says they do with their things as done, unless this reply shows it failed or was stopped. Name each item exactly as the HUD or the "Gear now" list spells it, so it stays one item. Only items whose state changed; [] when none. The HUD stays the record of what ${userName} owns; this only says how it is carried.`;
+    let rules = `"gear": every change in how or where ${userName} carries a physical thing — from what ${userName} did in their own last message and from what happened in this reply: drawing or sheathing a weapon, putting on or taking off armour, clothes or a bag, putting something into a bag, pouch or pocket or taking it out, setting it down, leaving it somewhere, dropping it, handing it over, picking it up, using it up. "in hand" is held; "sheathed" is in its sheath, scabbard or holster; "on body" is slung, strapped or hung on ${userName} (back, belt, shoulder), with "where"; "in container" names the container in "inside"; "stowed" is left somewhere off ${userName}, with "where"; "gone" is given away, used up, lost or destroyed. An item merely nearby, owned by an NPC, or offered but not taken is not ${userName}'s gear. Damage by itself does not move or remove an item. Take what ${userName} says they do with their things as done, unless this reply shows it failed or was stopped. Name each item exactly as the HUD or the "Gear now" list spells it, so it stays one item. Only items whose state changed; [] when none. The HUD stays the record of what ${userName} owns; this only says how it is carried.`;
     if (gc.tell && chat && st) {
         let now = [];
         try { now = gearRead(chat, st).items.filter(it => it.state && it.state !== 'gone'); } catch { now = []; }
@@ -14353,7 +14439,7 @@ function spellStanding(lines) {
 
 /** What the story reports: spells learned, and how far each study has come. A swiped-away reply takes its part with it. */
 function spellStoryFold(chat) {
-    const learned = new Map(), progress = new Map(), order = new Map();
+    const learned = new Map(), mastered = new Map(), progress = new Map(), order = new Map();
     let i = 0;
     for (const m of chat || []) {
         if (m.role !== 'assistant') continue;
@@ -14362,27 +14448,36 @@ function spellStoryFold(chat) {
         const y = d && isPlainObject(d.survival) ? d.survival : null;
         if (!y) continue;
         for (const n of Array.isArray(y.learned) ? y.learned : []) { const k = spellKey(n); if (k && !learned.has(k)) learned.set(k, { name: n, msgId: m.id, at: order.get(m.id) }); }
+        for (const n of Array.isArray(y.mastered) ? y.mastered : []) { const k = spellKey(n); if (k) mastered.set(k, { name: n, msgId: m.id, at: order.get(m.id) }); }
         for (const s of Array.isArray(y.study) ? y.study : []) if (s && s.spell) progress.set(spellKey(s.spell), { progress: s.progress, note: s.note || null, msgId: m.id });
     }
-    return { learned, progress, order };
+    return { learned, mastered, progress, order };
 }
 
-function spellSame(a, b) { return a === b || (a.length > 4 && b.length > 4 && (a.includes(b) || b.includes(a))); }
+// A shorter spell name is often a different spell (Water Ball / Water Ball Storm).
+// Keys already normalize punctuation and case; substring matches grant abilities too easily.
+function spellSame(a, b) { return a === b; }
 
 /** The names the player knows: the spellbook, and what the story said they learned since they last cleared it. */
 function spellKnown(chat, st, fold) {
     const f = fold || spellStoryFold(chat);
     const forget = isPlainObject(st && st.spellForget) ? st.spellForget : {};
     const out = new Map();
-    for (const sp of Array.isArray(st && st.spellbook) ? st.spellbook : []) { const k = spellKey(sp.name); if (k) out.set(k, { name: sp.name, from: sp.from || 'story' }); }
+    for (const sp of Array.isArray(st && st.spellbook) ? st.spellbook : []) {
+        const k = spellKey(sp.name);
+        // Earlier builds populated this source from every fight-menu option. It is not proof
+        // of a learned spell; a later witnessed cast or explicit manual mark still counts.
+        if (k && sp.from !== 'fight') out.set(k, { name: sp.name, from: sp.from || 'story' });
+    }
     for (const [k, v] of f.learned) {
         if (k in forget) { const at = forget[k] ? f.order.get(forget[k]) : -1; if (at === undefined || v.at <= at) continue; }
         if (!out.has(k)) out.set(k, { name: v.name, from: 'learned', msgId: v.msgId });
     }
+    for (const [k, v] of f.mastered) if (!out.has(k) && !(k in forget)) out.set(k, { name: v.name, from: 'mastered', msgId: v.msgId });
     return out;
 }
 
-const SPELL_STATUS_ORDER = { known: 0, study: 1, reach: 2, open: 3, next: 4, special: 5, locked: 6 };
+const SPELL_STATUS_ORDER = { mastered: 0, known: 1, study: 2, reach: 3, open: 4, next: 5, special: 6, locked: 7 };
 
 /** The spell list for the Magic card: each spell with where it stands for you. Null when the lorebook has none. */
 function spellListPanel(chatId, chat, st, sys) {
@@ -14407,7 +14502,8 @@ function spellListPanel(chatId, chat, st, sys) {
     const spells = cat.map(r => {
         let status, why = null;
         const sch = has(r.school) || (r.parent ? has(r.parent) : null);
-        if (isKnown(r.key)) status = 'known';
+        if (fold.mastered.has(r.key)) status = 'mastered';
+        else if (isKnown(r.key)) status = 'known';
         else if (studyKeys.has(r.key)) status = 'study';
         else if (r.kind === 'unique') { status = 'special'; why = r.who ? `Unique — ${r.who}` : 'Unique'; }
         else if (r.kind === 'rare') { status = 'special'; why = 'Forbidden, lost or legendary'; }
@@ -14428,14 +14524,14 @@ function spellListPanel(chatId, chat, st, sys) {
     });
     // a known spell the lorebook does not have still shows, under its own heading
     const catKeys = cat.map(r => r.key);
-    for (const [k, v] of known) if (!catKeys.some(c => spellSame(c, k))) spells.push({ name: v.name, key: k, school: 'Other', rank: null, step: null, status: 'known', why: v.from === 'fight' ? 'Seen in a fight' : v.from === 'you' ? 'Marked by you' : 'From the story', who: null, effect: null, chant: null, fan: false, progress: null, note: null });
+    for (const [k, v] of known) if (!catKeys.some(c => spellSame(c, k))) spells.push({ name: v.name, key: k, school: 'Other', rank: null, step: null, status: fold.mastered.has(k) ? 'mastered' : 'known', why: v.from === 'you' ? 'Marked by you' : 'From the story', who: null, effect: null, chant: null, fan: false, progress: null, note: null });
     const bySchool = new Map();
     for (const s of spells) { const k = spellSchoolKey(s.school); if (!bySchool.has(k)) bySchool.set(k, { key: k, name: s.school, spells: [] }); bySchool.get(k).spells.push(s); }
     const schools = [...bySchool.values()].map(g => {
         const mine = has(g.name);
         g.spells.sort((a, b) => (a.step === null) - (b.step === null) || (a.step || 0) - (b.step || 0) || SPELL_STATUS_ORDER[a.status] - SPELL_STATUS_ORDER[b.status] || a.name.localeCompare(b.name));
         const n = (st0) => g.spells.filter(s => s.status === st0).length;
-        return { key: g.key, name: g.name, mine: !!mine, rank: mine ? mine.rank : null, step: mine ? mine.step : null, odd: g.spells.every(s => s.status === 'special'), known: n('known'), reach: n('reach') + n('open'), next: n('next'), study: n('study'), total: g.spells.length, spells: g.spells };
+        return { key: g.key, name: g.name, mine: !!mine, rank: mine ? mine.rank : null, step: mine ? mine.step : null, odd: g.spells.every(s => s.status === 'special'), known: n('known') + n('mastered'), reach: n('reach') + n('open'), next: n('next'), study: n('study'), total: g.spells.length, spells: g.spells };
     }).sort((a, b) => (b.mine - a.mine) || ((b.step ?? -1) - (a.step ?? -1)) || (b.known - a.known) || (a.odd - b.odd) || (SPELL_ELEMENTS.test(b.key) - SPELL_ELEMENTS.test(a.key)) || (/^(unique|other|melded)$/i.test(a.name) - /^(unique|other|melded)$/i.test(b.name)) || a.name.localeCompare(b.name));
     // a school whose rank went up in the last few HUDs: what that opened
     const news = [];
@@ -14456,7 +14552,7 @@ function spellListPanel(chatId, chat, st, sys) {
         const k = spellKey(s.name);
         const row = spells.find(x => x.key === k || spellSame(x.key, k));
         const pr = fold.progress.get(k);
-        return { name: s.name, school: row ? row.school : s.school || null, rank: row ? row.rank : s.rank || null, done: !!(row && row.status === 'known') || isKnown(k),
+        return { name: s.name, school: row ? row.school : s.school || null, rank: row ? row.rank : s.rank || null, done: !!(row && ['known', 'mastered'].includes(row.status)) || isKnown(k),
             progress: pr && pr.progress !== null && pr.progress !== undefined && Number.isFinite(Number(pr.progress)) ? Math.max(0, Math.min(100, Math.round(Number(pr.progress)))) : null, note: pr ? pr.note : null, why: row ? row.why : null };
     });
     return { total: cat.length, ladder: stand.ladder, gate: stand.gate, casting: stand.casting, voiceless: stand.voiceless,
@@ -14527,7 +14623,7 @@ function questNormalize(list) {
 function hmsParseWhen(text, now) {
     if (!text) return null;
     const t = String(text);
-    const c = hmsClock({ lines: [{ text: t.replace(/,/, ' |') }] });
+    const c = hmsClock({ lines: [{ text: /^Armored Dragon Calendar:/i.test(t) ? t : t.replace(/,/, ' |') }] });
     if (!c) {
         const d = t.match(/\bDay\s*(\d+)/i);
         if (d) return (Number(d[1]) - 1) * 1440 + 23 * 60 + 59;
@@ -15493,12 +15589,19 @@ spindle.onFrontendMessage(async (payload, userId) => {
 
             case 'atlas_get': {
                 if (!payload.chatId) return;
-                let atlas = atlasFor(payload.chatId);
-                if (!atlas) { await loreBuildPoolFromApi(payload.chatId); atlas = atlasFor(payload.chatId); }
-                if (!atlas) { toFrontend({ type: 'atlas', chatId: payload.chatId, atlas: null }); break; }
                 const chat = await chatApi.getMessages(payload.chatId);
                 const m = latestHudMessage(chat);
                 const hud = m ? parseHud(textOf(m.content)) : null;
+                let atlas = atlasFor(payload.chatId, hud && hud.location);
+                if (!lorePool.has(payload.chatId)) {
+                    await loreBuildPoolFromApi(payload.chatId);
+                    atlas = atlasFor(payload.chatId, hud && hud.location);
+                }
+                if (atlas) for (const prior of chat.filter(x => x.role === 'assistant').slice(-100)) {
+                    const h = parseHud(textOf(prior.content));
+                    if (h && h.location) atlasAddMushokuPath(atlas, h.location);
+                }
+                if (!atlas) { toFrontend({ type: 'atlas', chatId: payload.chatId, atlas: null }); break; }
                 const ap = atlasPayload(atlas, hud && hud.location ? atlasLocate(atlas, hud.location) : null);
                 // the places the map bank has a drawing of
                 try {

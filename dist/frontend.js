@@ -6030,11 +6030,15 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
         return h('div', { class: 'rpgc-set' }, h('h4', null, document.createTextNode(head)),
             S.participation !== 'explicit' ? h('p', { class: 'rpgc-note' }, `Canon reference${S.canonMode ? ` (${S.canonMode})` : ''}: ${cur ? `Arc ${cur.no} — ${cur.title}` : 'no matching arc'}. Your personal story is tracked separately.`) : null,
             bar, h('div', { class: 'rpgc-wrow' }, h('span', null, `K.${S.from}`), h('b', { style: 'margin:0 auto' }, `K.${S.year} \u00B7 ${where}`), h('span', null, `K.${S.to}`)),
-            h('ul', { class: 'rpgc-wlist' }, near.map(row)), all);
+            h('ul', { class: 'rpgc-wlist' }, near.map(row)),
+            S.events && S.events.length ? h('div', { class: 'rpgc-set' }, h('h4', null, 'Established canon outcomes'),
+                h('ul', { class: 'rpgc-wlist' }, S.events.slice(-12).map(e => h('li', null,
+                    h('b', null, e.name), ` — ${e.state}${e.arc ? ` (Arc ${e.arc})` : ''}: ${e.detail}`)))) : null,
+            all);
     }
 
     // The spell list: what the bot's lorebook describes, against the ranks your HUD shows.
-    const SPELL_STATUS = { known: 'Known', study: 'Studying', reach: 'Within reach', open: 'In the lorebook', next: 'Next rank', locked: 'Locked', special: 'Special' };
+    const SPELL_STATUS = { mastered: 'Mastered', known: 'Known', study: 'Studying', reach: 'Within reach', open: 'In the lorebook', next: 'Next rank', locked: 'Locked', special: 'Special' };
     function renderSpellList(L) {
         const raw = (v) => document.createTextNode(String(v ?? ''));
         const filter = state.spellFilter === 'all' ? 'all' : 'mine';
@@ -6080,12 +6084,12 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
                             sp.rank ? h('span', { class: 'rpgc-chip abil' }, raw(sp.rank)) : null,
                             h('span', { class: 'rpgc-chip rpgc-spell-st ' + sp.status, title: sp.why || null }, SW('spell', SPELL_STATUS[sp.status] || sp.status)),
                             h('span', { class: 'rpgc-spell-btns' },
-                                sp.status === 'known' ? h('button', { class: 'rpgc-mini', title: 'Not learned after all: take it off', onclick: () => known(sp, false) }, '\u2715')
+                                sp.status === 'known' || sp.status === 'mastered' ? h('button', { class: 'rpgc-mini', title: 'Not learned after all: take it off', onclick: () => known(sp, false) }, '\u2715')
                                     : [sp.status === 'study' ? h('button', { class: 'rpgc-mini', title: 'Stop studying', onclick: () => study(sp, false) }, '\uD83D\uDCD6\u2715')
                                         : h('button', { class: 'rpgc-mini', title: 'Study it: the story is reminded, and reports how it goes', onclick: () => study(sp, true) }, '\uD83D\uDCD6'),
                                     h('button', { class: 'rpgc-mini', title: 'Mark it learned', onclick: () => known(sp, true) }, '\u2713')])),
-                        sp.why && sp.status !== 'known' ? h('p', { class: 'rpgc-note why' }, sp.why) : null,
-                        sp.fan && sp.status !== 'known' ? h('p', { class: 'rpgc-note why' }, 'Not canon: very rare') : null,
+                        sp.why && !['known', 'mastered'].includes(sp.status) ? h('p', { class: 'rpgc-note why' }, sp.why) : null,
+                        sp.fan && !['known', 'mastered'].includes(sp.status) ? h('p', { class: 'rpgc-note why' }, 'Not canon: very rare') : null,
                         sp.effect ? h('p', { class: 'eff' }, raw(sp.effect)) : null,
                         sp.chant ? h('p', { class: 'chant' }, '\u201C', raw(sp.chant), '\u201D', L.voiceless ? h('span', { class: 'rpgc-note' }, ' (', 'you can skip it', ')') : null) : null,
                         sp.progress !== null && sp.progress !== undefined ? levelBar(sp.progress, 'ok') : null);

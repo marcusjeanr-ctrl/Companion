@@ -1,3 +1,13 @@
+## 2.8.3 compatibility candidate — Mushoku integration
+
+- Correct Six-Sided's 30-day calendar and parse mixed comma/arrow geographic paths.
+- Derive custom Atlas locations from observed HUDs without changing the card or worldbook.
+- Record witnessed canon outcomes across active swipes, keeping Marcus's sandbox arc separate.
+- Add explicit spell mastery and stop older fight-menu entries or substring name matches from granting spells.
+- Tighten gear reporting for nearby items and preserve accepted-objective agency rules.
+- Expand compatibility fixtures to cover the 22 card arcs and other supported worlds.
+- Live Lumiverse validation is the remaining release gate.
+
 ## 2.8.2 beta — Six-Sided World compatibility
 
 - Normalize both Mushoku HUD formats for calendar, birth, mana, Touki, casting, sword and magic ranks.
