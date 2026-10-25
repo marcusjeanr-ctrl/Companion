@@ -1,3 +1,16 @@
+## 2.8.17 — Universal Stability & Tracking Integrity
+
+- Apply shared-engine fixes across supported worlds and classic mode; preserve the existing architecture, extension identifier, v2 saves, modules, permissions, preset and tracker transport.
+- Resolve exact character names before unique aliases/short names. Remove first-name merging of distinct full names and speculative multiword matching in Minds. Keep ambiguous names separate.
+- Retain guesses as unsure beliefs and gossip as unverified; a missing acquisition vector or a sender name alone no longer makes knowledge certain. Exclude explicitly speculative Minds/agenda records. Story-reported secret discoveries require a vector before granting a recipient knowledge or exporting a discovery to Chronicle.
+- Preserve explicit empty objective lists, skip unaccepted/suggested/invalid goals, and support abandoned objectives. Keep same-title Agenda items with different participants/locations separate and independently editable. Strengthen player-agency and off-screen evidence instructions without extra model calls.
+- Bind newly written per-swipe reports to the source reply. Equal-length edits invalidate the old report for every module using that reader. Serialize metadata writes, recheck the active target and advance UI caches only after successful persistence. Add the missing classic-mode slow-response guard.
+- Restrict generated regeneration context to the history before the replaced reply, including module requests, spell study, survival and Minds. Ignore hidden reports/HUDs consistently. Respect Reporter/Minds slots only outside chat history and avoid repeating injection on the same processed prompt array.
+- Rebuild injury read views from active reports while preserving manual/unbound legacy injuries. Bind new chapter summaries and derived discoveries to their source range; withhold stale summaries from prompts without deleting their text. Reject summaries if their source changes during generation.
+- Coalesce concurrent chat-state loads, serialize immutable save snapshots and keep a recovery copy after successful writes. Recover invalid/missing roots where a valid copy exists; normalize malformed collection roots, retain legacy seed migration and reject unsafe merge/lock-path property names. These are best-effort safeguards, not a host-level atomic transaction.
+- Cache source fingerprints per unchanged message object. Keep existing read-pass memoization; no corrective model calls, quote-validation gate or new mandatory report fields.
+- Add universal regression coverage and a one-command runner. Preserve all nine earlier suites, updating one synthetic swipe test to restore the original text with its swipe. See tools/AUDIT_2_8_17.md for results, measured overhead and unresolved risks.
+
 ## 2.8.16 — general known-spell reconciliation and active Agenda items
 
 - Read explicit player-owned Known Spells lists from active assistant replies as established knowledge, even when a separate tracker omitted them. Support named-player and second-person Markdown headings, bullets and tier lists. Exclude other actors' lists, general catalogs, rank-only descriptions, negative/untrained sections, quotations and code examples.

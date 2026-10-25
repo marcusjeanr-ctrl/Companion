@@ -549,6 +549,7 @@ function mergeDeep(base, src) {
     if (!isPlainObject(src)) return clone(base);
     const out = clone(base);
     for (const [k, v] of Object.entries(src)) {
+        if (['__proto__', 'constructor', 'prototype'].includes(k) || v === undefined) continue;
         if (isPlainObject(v) && isPlainObject(out[k])) out[k] = mergeDeep(out[k], v);
         else out[k] = clone(v);
     }
@@ -1883,27 +1884,69 @@ function buildTrackerExample(committed) {
 
 // ───────────────────────────── Tracker storage (per message, per swipe) ─────────────────────────────
 
-function getSwipeData(msg) {
-    const store = msg?.metadata?.[META_KEY]?.swipes;
-    if (!store) return null;
-    return store[String(msg.swipe_id ?? 0)] || null;
+function readingSource(text) {
+    const s = textOf(text);
+    let h = 5381;
+    for (let i = s.length - 1; i >= 0; i--) h = Math.imul(h, 33) ^ s.charCodeAt(i);
+    return `${s.length}:${hashStr(s)}:${h >>> 0}`;
 }
 
+const readingSourceCache = new WeakMap();
+function messageSource(msg) {
+    const text = textOf(msg.content);
+    const cached = readingSourceCache.get(msg);
+    if (cached && cached.text === text) return cached.source;
+    const source = readingSource(text);
+    readingSourceCache.set(msg, { text, source });
+    return source;
+}
+function trackingMessageVisible(msg) {
+    return !!msg && msg.hidden !== true && msg.is_hidden !== true && msg.metadata?.hidden !== true && msg.extra?.hidden !== true;
+}
+function getSwipeData(msg) {
+    if (!trackingMessageVisible(msg)) return null;
+    const mine = msg?.metadata?.[META_KEY];
+    const key = String(msg?.swipe_id ?? 0);
+    const data = mine?.swipes?.[key];
+    if (!isPlainObject(data)) return null;
+    const source = mine.sources?.[key];
+    return source && source !== messageSource(msg) ? null : data;
+}
+
+const swipeWrites = new Map();
 async function setSwipeData(chatId, msg, data, extraPatch = {}) {
-    statesNote(chatId, msg.id, data);
-    const tc = thoughtsCache.get(chatId);
-    if (tc) {
-        if (Array.isArray(data?.characters) && data.characters.length) tc.set(msg.id, data.characters);
-        else tc.delete(msg.id);
-    }
-    const metadata = { ...(msg.metadata || {}) };
-    const mine = { ...(metadata[META_KEY] || {}) };
-    const swipes = { ...(mine.swipes || {}) };
-    swipes[String(msg.swipe_id ?? 0)] = data;
-    mine.swipes = swipes;
-    metadata[META_KEY] = mine;
-    await chatApi.updateMessage(chatId, msg.id, { metadata, ...extraPatch });
-    msg.metadata = metadata;
+    const queueKey = `${chatId}:${msg.id}`;
+    const expected = readingSource(msg.content), swipe = msg.swipe_id ?? 0;
+    const snapshot = clone(data), patch = clone(extraPatch);
+    const write = (swipeWrites.get(queueKey) || Promise.resolve()).catch(() => {}).then(async () => {
+        const fresh = (await chatApi.getMessages(chatId)).find(m => m.id === msg.id);
+        if (!fresh || (fresh.swipe_id ?? 0) !== swipe || readingSource(fresh.content) !== expected) {
+            throw new Error('The reply changed before its tracking data could be saved. Refresh the active reply.');
+        }
+        const metadata = { ...(fresh.metadata || {}) };
+        const mine = { ...(metadata[META_KEY] || {}) };
+        const key = String(swipe);
+        mine.swipes = { ...(mine.swipes || {}), [key]: snapshot };
+        mine.sources = { ...(mine.sources || {}), [key]: readingSource(patch.content ?? fresh.content) };
+        metadata[META_KEY] = mine;
+        await chatApi.updateMessage(chatId, msg.id, { ...patch, metadata });
+        msg.metadata = metadata;
+        if (patch.content !== undefined) msg.content = patch.content;
+        statesNote(chatId, msg.id, snapshot);
+        const tc = thoughtsCache.get(chatId);
+        if (tc) {
+            if (Array.isArray(snapshot.characters) && snapshot.characters.length) tc.set(msg.id, snapshot.characters);
+            else tc.delete(msg.id);
+        }
+    });
+    swipeWrites.set(queueKey, write);
+    try { await write; } finally { if (swipeWrites.get(queueKey) === write) swipeWrites.delete(queueKey); }
+}
+
+/** The history that exists before a reply being replaced. */
+function trackingBefore(chat, excludeId) {
+    const at = excludeId ? chat.findIndex(m => m.id === excludeId) : -1;
+    return at >= 0 ? chat.slice(0, at) : chat;
 }
 
 function chatSeedPath(chatId) {
@@ -1950,7 +1993,7 @@ async function collectCommitted(chatId, chat, excludeId = null) {
 
 function lastAssistant(chat, excludeId = null) {
     for (let i = chat.length - 1; i >= 0; i--) {
-        if (chat[i].role === 'assistant' && chat[i].id !== excludeId) return chat[i];
+        if (chat[i].role === 'assistant' && chat[i].id !== excludeId && trackingMessageVisible(chat[i])) return chat[i];
     }
     return null;
 }
@@ -2297,7 +2340,7 @@ async function pushState(chatId, snapshot = null) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.16-rc.1';
+const RPGC_VERSION = '2.8.17';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -2624,6 +2667,7 @@ const RPGC_SLOT_HEAD = '[RPG Companion \u2014 for this reply]';
 
 /** What an HMS reply is asked for besides the story: the side-panel block, a dice result, the optional extras. */
 async function hmsRequestParts(chatId, chat, gt, excludeId, userName, slot, committed = null) {
+    chat = trackingBefore(chat, excludeId);
     const parts = [];
     if (oocTurnIn(chat, excludeId)) return parts;          // an OOC question: the guide answers, no side-panel block
     reqChatNow = chatId;
@@ -2648,12 +2692,13 @@ async function rpgcSlotRequest(mctx) {
     const env = (mctx && mctx.env) || {};
     const gt = (env.system && env.system.lastGenerationType) || 'normal';
     if (gt === 'impersonate' || gt === 'quiet') return '';
-    const chat = await chatApi.getMessages(chatId);
+    let chat = await chatApi.getMessages(chatId);
     const card = env.character ? `${env.character.personality || ''}\n${env.character.description || ''}` : '';
     if (!isHmsChat(chatId, card ? [{ content: card }] : null, chat)) return '';      // classic chats keep their own tracker prompt
     injNoteCore(chatId, card);                       // a bot that keeps its own wounds: no injuries asked
     const last = chat[chat.length - 1];
     const excludeId = (gt === 'swipe' || gt === 'regenerate') && last && last.role === 'assistant' ? last.id : null;
+    chat = trackingBefore(chat, excludeId);
     const userName = (env.names && String(env.names.user || '').trim()) || await getUserName(chatId);
     const parts = await hmsRequestParts(chatId, chat, gt, excludeId, userName, true);
     if (!parts.length) return '';
@@ -2668,10 +2713,11 @@ async function rpgcMindsMacro(mctx) {
     const env = (mctx && mctx.env) || {};
     const gt = (env.system && env.system.lastGenerationType) || 'normal';
     if (gt === 'impersonate' || gt === 'quiet' || gt === 'continue') return '';
-    const chat = await chatApi.getMessages(chatId);
+    let chat = await chatApi.getMessages(chatId);
     if (!isHmsChat(chatId, null, chat)) return '';
     const last = chat[chat.length - 1];
     const excludeId = (gt === 'swipe' || gt === 'regenerate') && last && last.role === 'assistant' ? last.id : null;
+    chat = trackingBefore(chat, excludeId);
     if (oocTurnIn(chat, excludeId)) return '';
     const userName = (env.names && String(env.names.user || '').trim()) || await getUserName(chatId);
     return simStateText(simFold(chat, await getChatState(chatId), { excludeId, userName }), chat, userName);
@@ -2701,7 +2747,9 @@ function registerHandshakeMacros() {
 }
 registerHandshakeMacros();
 
+const injectedPromptPasses = new WeakSet();
 registerInterceptorKeep(async (messages, context) => {
+    if (injectedPromptPasses.has(messages)) return messages;
     if (context && context.chatId && context.generationType !== 'quiet') generating.set(context.chatId, Date.now());
     // The connection the player's own reply runs on is what "Same as my chat" follows for the extension's calls.
     if (context && context.chatId && context.connectionId && context.generationType !== 'quiet' && context.chatId !== SANDBOX_ID) {
@@ -2718,9 +2766,10 @@ registerInterceptorKeep(async (messages, context) => {
         const chatId = ctx.chatId;
         if (!chatId) return messages;
 
-        const chat = await chatApi.getMessages(chatId);
+        let chat = await chatApi.getMessages(chatId);
         const last = chat[chat.length - 1];
         const excludeId = (gt === 'swipe' || gt === 'regenerate') && last && last.role === 'assistant' ? last.id : null;
+        chat = trackingBefore(chat, excludeId);
         // an OOC question is answered by the bot's guide: no HUD, no story, so nothing of ours goes in
         if (oocTurnIn(chat, excludeId)) return messages;
         const { data: committed } = await collectCommitted(chatId, chat, excludeId);
@@ -2751,7 +2800,7 @@ registerInterceptorKeep(async (messages, context) => {
         const trailingName = hmsOn ? 'side-panel request' : 'tracker instructions';
         // A preset with the {{rpgc_request}} slot (HMS Reporter) already carries this reply's request:
         // then it is not added a second time.
-        const slotted = hmsOn && out.some(m => textOf(m.content).includes(RPGC_SLOT_HEAD));
+        const slotted = hmsOn && out.some(m => !m.__isChatHistory && textOf(m.content).includes(RPGC_SLOT_HEAD));
         if (hmsOn) {
             // HMS: the HUD is the tracker. Only ask for the companion block, and never touch the HUD.
             if (!slotted) trailing.push(...await hmsRequestParts(chatId, chat, gt, excludeId, userName, false, committed));
@@ -2807,7 +2856,7 @@ registerInterceptorKeep(async (messages, context) => {
         if (!hmsOn) trailing.push(...extraFeaturePrompts(false, userName));      // HMS: part of hmsRequestParts
 
         if (gt !== 'continue' && chapCfg().inPrompt) {
-            const chB = chaptersBlock(await getChatState(chatId), userName);
+            const chB = chaptersBlock(await getChatState(chatId), userName, null, chat);
             if (chB) {
                 if (contextMsg) { contextMsg.content = `${chB}\n\n${contextMsg.content}`; contextName = `RPG Companion: the story so far + ${String(contextName || '').replace(/^RPG Companion:\s*/, '')}`; }
                 else { contextMsg = { role: 'system', content: chB }; contextName = `RPG Companion: the story so far (~${Math.round(chB.length / 4)} tokens)`; }
@@ -2817,7 +2866,7 @@ registerInterceptorKeep(async (messages, context) => {
         if (gt !== 'continue' && injCfg().on && injCfg().tell && injActive(chat)) {
             const ist = await getChatState(chatId);
             const lastHud = latestHudMessage(chat);
-            const iB = injBlock(ist, userName, lastHud ? chapterMark(lastHud).minutes : null);
+            const iB = injBlock(ist, userName, lastHud ? chapterMark(lastHud).minutes : null, chat);
             if (iB) {
                 if (contextMsg) { contextMsg.content = `${contextMsg.content}\n${iB}`; contextName = `${contextName} + injuries`; }
                 else { contextMsg = { role: 'system', content: iB }; contextName = `RPG Companion: injuries (~${Math.round(iB.length / 4)} tokens)`; }
@@ -2826,7 +2875,7 @@ registerInterceptorKeep(async (messages, context) => {
 
         // Minds (FrankenSIM): the state of the people in the story, as memory, before the player's turn.
         // A preset that carries {{rpgc_minds}} (HMS Reporter) already has it in its own block.
-        if (hmsOn && gt !== 'continue' && simWanted() && simCfg().tell && !out.some(m => textOf(m.content).includes(SIM_STATE_HEAD))) {
+        if (hmsOn && gt !== 'continue' && simWanted() && simCfg().tell && !out.some(m => !m.__isChatHistory && textOf(m.content).includes(SIM_STATE_HEAD))) {
             try {
                 const sTxt = simStateText(simFold(chat, await getChatState(chatId), { excludeId, userName }), chat, userName);
                 if (sTxt) {
@@ -2846,7 +2895,7 @@ registerInterceptorKeep(async (messages, context) => {
             if (immActive(immSt)) {
                 const view = immViewFor(immSt.immersive, excludeId);
                 // The exchange this reply answers: the last message, or the one before a reply being redone.
-                const anchor = excludeId ? chat[chat.length - 2] : chat[chat.length - 1];
+                const anchor = chat[chat.length - 1];
                 const lr = settings.lastDiceRoll;
                 const manual = lr && (!lr.chatId || lr.chatId === chatId) && !(settings.dnd && settings.dnd.enabled === false) ? lr : null;
                 const dice = immDiceFor(immSt.immersive, anchor ? anchor.id : null, !!(view.pending && view.pending.exploit), immRules(), { skipPlayer: !!manual });
@@ -2899,7 +2948,7 @@ registerInterceptorKeep(async (messages, context) => {
         }
 
         if (slotted) {
-            const sl = out.find(m => textOf(m.content).includes(RPGC_SLOT_HEAD));
+            const sl = out.find(m => !m.__isChatHistory && textOf(m.content).includes(RPGC_SLOT_HEAD));
             const tok = sl ? Math.round(textOf(sl.content).slice(textOf(sl.content).indexOf(RPGC_SLOT_HEAD)).length / 4) : 0;
             spindle.log.info(`[RPG Companion HMS] Side-panel request: in the preset's slot (~${tok} tokens), not added again.`);
             if (!injected.length) { lastInjection.set(chatId, { at: new Date().toISOString(), parts: [`side-panel request (~${tok} tokens, in the preset)`] }); return messages; }
@@ -2911,6 +2960,7 @@ registerInterceptorKeep(async (messages, context) => {
             .map(({ msg, name }) => ({ messageIndex: out.indexOf(msg), name }))
             .filter(b => b.messageIndex >= 0);
         if (context && context.chatId) lastInjection.set(context.chatId, { at: new Date().toISOString(), parts: (breakdown || []).map(b => b.name).concat(slotted ? ['side-panel request (in the preset)'] : []) });
+        injectedPromptPasses.add(out);
         return { messages: out, breakdown };
     } catch (e) {
         logE(`[RPG Companion HMS] Interceptor error: ${e?.message || e}`);
@@ -4783,7 +4833,7 @@ async function runSeparateUpdate(chatId, targetId = null) {
         }
         const targetSwipe = target.swipe_id ?? 0, targetText = textOf(target.content);
         const userName = await getUserName(chatId);
-        const { data: committed } = await collectCommitted(chatId, chat, target.id);
+        const { data: committed } = await collectCommitted(chatId, trackingBefore(chat, target.id));
         const locks = (await getChatState(chatId)).locks;
 
         if (isHmsChat(chatId, null, chat)) {
@@ -4839,7 +4889,7 @@ async function runSeparateUpdate(chatId, targetId = null) {
 
         const targetIdx = chat.indexOf(target);
         const depth = Math.max(1, Number(settings.updateDepth) || 4);
-        const history = chat.slice(0, targetIdx + 1).filter(m => m.role !== 'system' && (m.extra?.hidden !== true || m.id === target.id)).slice(-depth);
+        const history = chat.slice(0, targetIdx + 1).filter(m => m.role !== 'system' && (trackingMessageVisible(m) || m.id === target.id)).slice(-depth);
 
         const msgs = [{ role: 'system', content: system }];
         for (const m of history) msgs.push({ role: m.role === 'user' ? 'user' : 'assistant', content: textOf(m.content) });
@@ -4873,7 +4923,11 @@ async function runSeparateUpdate(chatId, targetId = null) {
             return;
         }
         const fresh = await chatApi.getMessages(chatId);
-        const msg = fresh.find(m => m.id === target.id) || target;
+        const msg = fresh.find(m => m.id === target.id);
+        if (!msg || (msg.swipe_id ?? 0) !== targetSwipe || textOf(msg.content) !== targetText) {
+            setStatus(chatId, 'info', 'The reply changed while tracking. Refresh to read the active reply.');
+            return;
+        }
         const existing = getSwipeData(msg) || {};
         const ex = classicExtras(parsed, await getChatState(chatId));
         if (ex.fight) await immAfterReply(chatId, msg, 'separate', { hud: null, fight: ex.fight });
@@ -4925,17 +4979,34 @@ async function runSeparateUpdate(chatId, targetId = null) {
 // ───────────────────────────── Per-chat state (seed, locks, checkpoint, encounter) ─────────────────────────────
 
 const chatStateCache = new Map();
+const chatStateLoads = new Map();
+const chatStateWrites = new Map();
 
 function emptyChatState() {
     return { v: 2, seed: null, locks: {}, checkpoint: null, encounter: null, encounterLogs: [], song: null, pins: {}, questNotes: [], survival: { log: [] }, party: { members: [] }, comms: { contacts: [] }, relPins: {}, spellbook: [], questFocus: null, xpAdjust: 0, immersive: null };
 }
 
+function validChatRecord(raw) {
+    return isPlainObject(raw) && (raw.v === 2 || (!raw.v && (raw.userStats || raw.infoBox || raw.characters)));
+}
 async function getChatState(chatId) {
     if (chatStateCache.has(chatId)) return chatStateCache.get(chatId);
+    if (chatStateLoads.has(chatId)) return chatStateLoads.get(chatId);
+    const loading = loadChatState(chatId);
+    chatStateLoads.set(chatId, loading);
+    try { return await loading; } finally { if (chatStateLoads.get(chatId) === loading) chatStateLoads.delete(chatId); }
+}
+async function loadChatState(chatId) {
     let raw = null;
     try { raw = await spindle.storage.getJson(chatSeedPath(chatId), { fallback: null }); } catch { raw = null; }
+    if (!validChatRecord(raw)) {
+        try {
+            const backup = await spindle.storage.getJson(chatSeedPath(chatId) + '.recovery', { fallback: null });
+            if (validChatRecord(backup)) { raw = backup; logW('[RPG Companion HMS] Recovered chat state from the last saved recovery copy.'); }
+        } catch { /* the primary record remains untouched */ }
+    }
     let st = emptyChatState();
-    if (raw && raw.v === 2) st = { ...st, ...raw };
+    if (isPlainObject(raw) && raw.v === 2) st = { ...st, ...raw };
     else if (raw && (raw.userStats || raw.infoBox || raw.characters)) {
         st.seed = { userStats: raw.userStats || null, infoBox: raw.infoBox || null, characters: raw.characters || null };
     }
@@ -4946,13 +5017,25 @@ async function getChatState(chatId) {
     if (!isPlainObject(st.survival) || !Array.isArray(st.survival.log)) st.survival = { log: [] };
     if (!isPlainObject(st.party) || !Array.isArray(st.party.members)) st.party = { members: [] };
     if (!isPlainObject(st.comms) || !Array.isArray(st.comms.contacts)) st.comms = { contacts: [] };
+    if (!isPlainObject(st.relPins)) st.relPins = {};
+    if (!Array.isArray(st.spellbook)) st.spellbook = [];
+    for (const key of ['spellStudy', 'myObjectives']) if (st[key] !== undefined && !Array.isArray(st[key])) st[key] = [];
+    for (const key of ['spellForget', 'spellStudyStopped', 'rooms']) if (st[key] !== undefined && !isPlainObject(st[key])) st[key] = {};
+    if (chatStateCache.has(chatId)) return chatStateCache.get(chatId);
     chatStateCache.set(chatId, st);
     return st;
 }
 
 async function saveChatState(chatId, st) {
+    const snapshot = clone(st);
     chatStateCache.set(chatId, st);
-    await spindle.storage.setJson(chatSeedPath(chatId), st, { indent: 2 });
+    const write = (chatStateWrites.get(chatId) || Promise.resolve()).catch(() => {}).then(async () => {
+        await spindle.storage.setJson(chatSeedPath(chatId), snapshot, { indent: 2 });
+        try { await spindle.storage.setJson(chatSeedPath(chatId) + '.recovery', snapshot); }
+        catch (e) { logW(`[RPG Companion HMS] Recovery copy could not be saved: ${e?.message || e}`); }
+    });
+    chatStateWrites.set(chatId, write);
+    try { await write; } finally { if (chatStateWrites.get(chatId) === write) chatStateWrites.delete(chatId); }
 }
 
 // ───────────────────────────── Tracker locks ─────────────────────────────
@@ -5103,6 +5186,7 @@ async function toggleLock(chatId, path) {
     if (!Array.isArray(path) || !path.length || path.length > 5) return;
     const st = await getChatState(chatId);
     const keys = path.map(p => String(p));
+    if (keys.some(k => ['__proto__', 'constructor', 'prototype'].includes(k))) return;
     let node = st.locks;
     for (let i = 0; i < keys.length - 1; i++) {
         if (!isPlainObject(node[keys[i]])) node[keys[i]] = {};
@@ -5333,7 +5417,7 @@ async function buildEncounterInitPrompt(chatId, chat, framing = '', system = nul
     // The world's own rules. A fight that does not know the setting's power ladder invents one.
     if (loreCfg().inCombat) sys += await buildLoreBlock(chatId, { chat, sceneText: loreSceneTextFromEncounter(null, framing, initHud), where: 'fight setup' });
     if (memCfg().inCombat) sys += await buildMemoryBlock(chatId, { queryText: `${framing || ''}\n${(initHud?.lines || []).map(l => l.text).join('\n')}`, where: 'fight setup' });
-    if (chapCfg().inFights) { const chB = chaptersBlock(await getChatState(chatId), userName, 3000); if (chB) sys += chB + '\n'; }
+    if (chapCfg().inFights) { const chB = chaptersBlock(await getChatState(chatId), userName, 3000, chat); if (chB) sys += chB + '\n'; }
     const ci = initEngine ? '' : await encounterCharactersInfo(chatId);
     if (ci) sys += `Here is the information available to you about the characters participating in the fight:\n<characters>\n${ci}</characters>\n\n`;
     sys += `Here are details about the user's ${userName}:\n<persona>\n${(await personaText(chatId)) || 'No persona information available.'}\n</persona>\n\n`;
@@ -7350,7 +7434,7 @@ async function immBuildSeedPrompt(chatId, chat, framing) {
     const scene = loreSceneTextFromEncounter(null, framing, hud);
     if (loreCfg().inCombat) sys += await buildLoreBlock(chatId, { chat, sceneText: scene, where: 'immersive fight' });
     if (memCfg().inCombat) sys += await buildMemoryBlock(chatId, { queryText: scene, where: 'immersive fight' });
-    if (chapCfg().inFights) { const chB = chaptersBlock(await getChatState(chatId), userName, 3000); if (chB) sys += chB + '\n'; }
+    if (chapCfg().inFights) { const chB = chaptersBlock(await getChatState(chatId), userName, 3000, chat); if (chB) sys += chB + '\n'; }
     if (!engine) {
         const ci = await encounterCharactersInfo(chatId);
         if (ci) sys += `<characters>\n${ci}</characters>\n\n`;
@@ -7693,6 +7777,23 @@ function chapterPlain(text) {
 
 const chapterBusy = new Set();
 
+function chapterRangeSource(chat, chapter) {
+    if (!Array.isArray(chat) || !chapter) return null;
+    const a = chat.findIndex(m => m.id === chapter.fromId);
+    const b = chapter.toId ? chat.findIndex(m => m.id === chapter.toId) : chat.length - 1;
+    if (a < 0 || b < a) return null;
+    return readingSource(chat.slice(a, b + 1).map(m => `${m.id}:${m.swipe_id ?? 0}:${trackingMessageVisible(m) ? 1 : 0}:${messageSource(m)}`).join('\n'));
+}
+function chapterSummaryValid(chapter, chat) {
+    if (!Array.isArray(chat)) return true;
+    if (!chat.some(m => m.id === chapter.fromId) || (chapter.toId && !chat.some(m => m.id === chapter.toId))) return false;
+    const first = chat.find(m => m.id === chapter.fromId);
+    const mark = chapterMark(first);
+    if (chapter.start?.arc && mark.arc && chapter.start.arc !== mark.arc) return false;
+    if (Number.isFinite(chapter.start?.minutes) && Number.isFinite(mark.minutes) && chapter.start.minutes !== mark.minutes) return false;
+    return !chapter.summarySource || chapter.summarySource === chapterRangeSource(chat, chapter);
+}
+
 async function chapterSummarize(chatId, id) {
     if (chapterBusy.has(chatId)) throw new Error('A summary is already being written.');
     chapterBusy.add(chatId);
@@ -7707,7 +7808,9 @@ async function chapterSummarize(chatId, id) {
         let b = ch.toId ? chat.findIndex(m => m.id === ch.toId) : chat.length - 1;
         if (a < 0) a = 0;
         if (b < 0 || b < a) b = chat.length - 1;
-        const slice = chat.slice(a, b + 1).filter(m => m.role === 'user' || m.role === 'assistant');
+        const source = chapterRangeSource(chat, ch);
+        if (!source) throw new Error('The chapter range changed. Select its active messages before summarising.');
+        const slice = chat.slice(a, b + 1).filter(m => trackingMessageVisible(m) && (m.role === 'user' || m.role === 'assistant'));
         if (!slice.length) throw new Error('This chapter has no messages yet.');
         const lastHud = [...slice].reverse().map(m => parseHud(textOf(m.content))).find(Boolean);
         const lines = slice.map(m => `${m.role === 'user' ? userName : 'Story'}: ${chapterPlain(textOf(m.content))}`).filter(l => l.length > 8);
@@ -7749,6 +7852,9 @@ async function chapterSummarize(chatId, id) {
         const fc = chaptersOf(fresh);
         const target = fc.list.find(x => x.id === id);
         if (!target) return null;
+        const latestChat = await chatApi.getMessages(chatId);
+        if (chapterRangeSource(latestChat, target) !== source) throw new Error('The chapter changed while summarising. The old result was discarded.');
+        target.summarySource = source;
         target.summary = String(out.summary || '').trim().slice(0, 6000);
         if (!target.titleByUser && out.title) target.title = String(out.title).trim().slice(0, 80);
         target.ended = out.ended ? String(out.ended).trim().slice(0, 300) : target.ended;
@@ -7757,7 +7863,7 @@ async function chapterSummarize(chatId, id) {
         target.summarizedAt = Date.now();
         target.msgCount = slice.length;
         for (const l of target.learned) {
-            if (!fc.knowledge.some(k => lockKey(k.text) === lockKey(l))) fc.knowledge.push({ text: l, loop: target.loopNo, at: Date.now() });
+            if (!fc.knowledge.some(k => lockKey(k.text) === lockKey(l))) fc.knowledge.push({ text: l, loop: target.loopNo, chapterId: target.id, summarySource: source, at: Date.now() });
         }
         if (fc.knowledge.length > 80) fc.knowledge = fc.knowledge.slice(-80);
         await saveChatState(chatId, fresh);
@@ -7779,12 +7885,12 @@ async function chapterQuiet(chatId, messages) {
  * The story so far, for the prompt. Newest chapters are kept first when the budget runs out; they
  * are then written oldest first. A closed loop is framed as what it is.
  */
-function chaptersBlock(st, userName, budget = null) {
+function chaptersBlock(st, userName, budget = null, chat = null) {
     const cfg = chapCfg();
     const c = isPlainObject(st.chapters) ? st.chapters : null;
     if (!c || cfg.enabled === false) return '';
     const max = Math.max(500, Number(budget ?? cfg.budget) || 4000);
-    const list = (c.list || []).filter(x => x.summary && x.inPrompt !== false);
+    const list = (Array.isArray(c.list) ? c.list : []).filter(x => x && x.summary && x.inPrompt !== false && chapterSummaryValid(x, chat));
     const picked = [];
     let used = 0;
     for (const ch of [...list].reverse()) {
@@ -7798,7 +7904,7 @@ function chaptersBlock(st, userName, budget = null) {
         picked.push(piece);
         used += piece.length;
     }
-    const know = (c.knowledge || []).filter(k => k && k.text);
+    const know = (Array.isArray(c.knowledge) ? c.knowledge : []).filter(k => k && k.text && (!k.chapterId || (c.list || []).some(ch => ch.id === k.chapterId && chapterSummaryValid(ch, chat) && (!k.summarySource || k.summarySource === ch.summarySource))));
     if (!picked.length && !know.length) return '';
     let s = '[RPG Companion: the story so far]\n';
     s += 'Summaries of earlier chapters of this story, oldest first. They hold unless the recent messages or the WORLD STATE say otherwise \u2014 the HUD always wins.\n';
@@ -7821,7 +7927,7 @@ function chaptersPanel(st, chat) {
         return {
             id: ch.id, kind: ch.kind, label: CHAPTER_LABEL[ch.kind], title: ch.title, status: ch.status,
             from: a === null ? null : a + 1, to: b === null ? null : b + 1, messages: a !== null && b !== null ? Math.max(0, b - a + 1) : null,
-            start: ch.start, end: ch.end, summary: ch.summary || '', ended: ch.ended || null, learned: ch.learned || [],
+            start: ch.start, end: ch.end, summary: ch.summary || '', stale: !chapterSummaryValid(ch, chat), ended: ch.ended || null, learned: ch.learned || [],
             summarized: !!ch.summarizedAt, inPrompt: ch.inPrompt !== false, loopNo: ch.loopNo || null
         };
     }) : [];
@@ -8071,7 +8177,7 @@ function chronicleBuild(chat, st, userName = null) {
             kin.set('f:' + f.key, { standing: f.standing || p.standing || null, rank: f.rank || p.rank || null, bounty: f.bounty || p.bounty || null });
         }
         for (const sx of Array.isArray(d.secrets) ? d.secrets : []) {
-            if (!sx || !sx.text || !sx.knownBy || !sx.knownBy.length) continue;
+            if (!sx || !sx.text || !sx.how || !Array.isArray(sx.knownBy) || !sx.knownBy.length) continue;
             const mine = sx.mine || chronIsUser(sx.whose, userName);
             // only who is new to it: a reply that repeats the list is not a second discovery
             const sk = 's:' + lockKey(sx.text), had = kin.get(sk) || [];
@@ -9531,7 +9637,33 @@ function injAssess(x, now) {
     else if (x.status === 'scar') out.note = 'cosmetic: no penalty';
     return out;
 }
-function injBlock(st, userName, now = null) {
+function injuryReadState(chat, st) {
+    if (!Array.isArray(chat)) return st;
+    const messages = new Map(chat.map(m => [m.id, m]));
+    const old = Array.isArray(st?.injuries?.list) ? st.injuries.list : [];
+    const base = old.filter(x => {
+        if (!x) return false;
+        if (x.manual || !x.sinceMsg) return true;
+        const m = messages.get(x.sinceMsg);
+        if (!m) return false;
+        const mine = m.metadata?.[META_KEY];
+        const hasReports = isPlainObject(mine?.swipes) && Object.values(mine.swipes).some(d => Array.isArray(d?.injuries));
+        return !hasReports && !mine?.sources?.[String(m.swipe_id ?? 0)];
+    }).map(x => ({ ...x }));
+    const view = { injuries: { list: base, before: {} } };
+    for (const m of chat) {
+        if (m.role !== 'assistant') continue;
+        const report = getSwipeData(m)?.injuries;
+        if (Array.isArray(report)) {
+            const safe = injNormalize(report);
+            if (!report.length || safe?.length) injAfterReply(view, m, safe || [], chapterMark(m).minutes);
+        }
+    }
+    return { ...st, injuries: view.injuries };
+}
+function injBlock(st, userName, now = null, chat = null) {
+    st = injuryReadState(chat, st);
+
     const list = (isPlainObject(st.injuries) ? st.injuries.list || [] : []).map(injMigrate);
     if (!list.length) return '';
     const bits = list.map(x => {
@@ -9543,6 +9675,7 @@ function injBlock(st, userName, now = null) {
     return `[RPG Companion: ${userName}'s injuries]\n${bits.join('; ')}.\nTreated is not healed: keep each one in the prose, and let it hurt when used. Heavy strain can tear a treated severe wound back to raw.\n`;
 }
 function injPanel(chat, st) {
+    st = injuryReadState(chat, st);
     const c = injCfg();
     if (!c.on) return null;
     const m = Array.isArray(chat) ? latestHudMessage(chat) : null;
@@ -9734,8 +9867,8 @@ function plotRequest(userName, mushoku = false) {
         if (mushoku) rules.push('"plot.canonEvents" contains only Mushoku canon events explicitly shown to occur, change, or be prevented in this reply or the player\u2019s last message. [] if none. A date, worldbook entry, prediction, rumor, or the canonical Rudeus arc does not prove an event happened to the player. Name the actual event and record its observed outcome; never overwrite an established divergence with an unobserved canon outcome.');
     }
     if (c.objectives) {
-        json.push('"objectives": [{"text": "one line", "state": "active|done|failed", "quest": "quest name or null"}]');
-        rules.push(`"objectives" are goals ${userName} has personally chosen or accepted, up to five, the nearest first. Another character proposing, ordering, or inviting ${userName} to do something does not make it ${userName}'s objective unless ${userName} agrees or acts on it; done when achieved, failed when impossible. NPCs may still pursue their own goals.`);
+        json.push('"objectives": [{"text": "one line", "state": "active|done|failed|abandoned", "quest": "quest name or null"}]');
+        rules.push(`"objectives" are goals ${userName} has personally chosen or accepted, up to five, the nearest first. Another character proposing, ordering, or inviting ${userName} to do something does not make it ${userName}'s objective unless ${userName} agrees or acts on it; A player intention is not a completed act. Omit suggestions and unaccepted orders; mark abandoned when the player drops a goal, done only when achieved, failed when impossible. NPCs may still pursue their own goals.`);
     }
     return json.length ? { json: json.join(', '), rules: rules.join(' ') } : null;
 }
@@ -9766,8 +9899,17 @@ function mtEventLedgerUncached(chat) {
 }
 function objectivesNormalize(list) {
     if (!Array.isArray(list)) return null;
-    const out = list.filter(isPlainObject).map(o => ({ text: immText(o.text, 160), state: ['active', 'done', 'failed'].includes(o.state) ? o.state : 'active', quest: immText(o.quest, 60) })).filter(o => o.text).slice(0, 6);
-    return out.length ? out : null;
+    const states = { accepted: 'active', completed: 'done', abandoned: 'abandoned', cancelled: 'abandoned', canceled: 'abandoned' };
+    const out = [];
+    for (const o of list) {
+        if (!isPlainObject(o) || o.accepted === false || reportSpeculative(o)) continue;
+        const raw = String(o.state || 'active').toLowerCase();
+        const state = states[raw] || raw;
+        const text = immText(o.text, 160);
+        if (!text || !['active', 'done', 'failed', 'abandoned'].includes(state)) continue;
+        out.push({ text, state, quest: immText(o.quest, 60) });
+    }
+    return out.length || !list.length ? out.slice(0, 6) : null;
 }
 /** The panel's view: the latest reading, the threads resolved along the way, and your own objectives. */
 function plotPanel(chat, st) {
@@ -9872,6 +10014,7 @@ function leanPanelForPrompt(chars) {
 }
 
 function buildCompanionInstruction(committed, userName, locks, st = null, chat = null, separate = false, opts = {}) {
+    if (chat) chat = trackingBefore(chat, opts.excludeId);
     return withReadPass(chat, () => buildCompanionInstructionRead(committed, userName, locks, st, chat, separate, opts));
 }
 function buildCompanionInstructionRead(committed, userName, locks, st = null, chat = null, separate = false, opts = {}) {
@@ -10079,7 +10222,7 @@ function latestHudMessage(chat) {
     for (let i = chat.length - 1; i >= 0; i--) {
         const m = chat[i];
         if (m.role !== 'assistant') continue;
-        if (m.hidden === true || m.is_hidden === true || (m.metadata && m.metadata.hidden === true)) continue;
+        if (!trackingMessageVisible(m)) continue;
         if (!textOf(m.content).trim()) continue;      // a reply still being written, or an empty one
         return m;
     }
@@ -10987,6 +11130,7 @@ function hmsReadSystems(hud, cfg) {
 const hmsParseCache = new Map();
 
 function messageHud(m) {
+    if (!trackingMessageVisible(m)) return null;
     const text = textOf(m.content);
     const key = `${m.id}:${m.swipe_id ?? 0}`;
     const hit = hmsParseCache.get(key);
@@ -11379,16 +11523,18 @@ function partyRoster(st) {
     return (st && isPlainObject(st.party) && Array.isArray(st.party.members)) ? st.party.members : [];
 }
 
-/** Finds the roster member a reported name refers to: exact, alias, or one name containing the other. */
+/** Exact canonical names win; aliases and short names must identify only one member. */
 function partyMatch(roster, name) {
     const k = lockKey(name);
-    if (!k) return null;
-    const first = k.split(/\s+/)[0];
-    return roster.find(m => m.key === k)
-        || roster.find(m => (m.aliases || []).some(a => lockKey(a) === k))
-        || roster.find(m => m.key.split(/\s+/)[0] === first && first.length >= 3)
-        || roster.find(m => (k.startsWith(m.key + ' ') || m.key.startsWith(k + ' ')))
-        || null;
+    if (!k || !Array.isArray(roster)) return null;
+    const rows = roster.filter(m => m && typeof m.name === 'string');
+    const unique = list => list.length === 1 ? list[0] : null;
+    const exact = rows.filter(m => lockKey(m.key || m.name) === k);
+    if (exact.length) return unique(exact);
+    const aliases = rows.filter(m => Array.isArray(m.aliases) && m.aliases.some(a => lockKey(a) === k));
+    if (aliases.length) return unique(aliases);
+    if (!k.includes(' ') && k.length >= 3) return unique(rows.filter(m => lockKey(m.key || m.name).split(/\s+/)[0] === k));
+    return null;
 }
 
 function partyActive(st, cfg) {
@@ -11666,7 +11812,7 @@ function relReadings(chat) {
 function relReadingsUncached(chat) {
     const list = [];
     for (let i = chat.length - 1, n = 0; i >= 0 && n < 300; i--) {
-        if (chat[i].role !== 'assistant') continue;
+        if (chat[i].role !== 'assistant' || !trackingMessageVisible(chat[i])) continue;
         n++;
         list.push(chat[i]);
     }
@@ -12408,7 +12554,8 @@ function agendaNormalize(list) {
         if (!key || out.some(x => x.key === key)) continue;
         const kind = String(e.kind || '').toLowerCase();
         const rawState = String(e.state || '').toLowerCase().replace(/[ -]+/g, '_');
-        const state = ['started', 'active', 'underway'].includes(rawState) ? 'in_progress' : rawState;
+        const state = ['started', 'active', 'underway'].includes(rawState) ? 'in_progress' : ['abandoned', 'canceled'].includes(rawState) ? 'cancelled' : rawState === 'moved' ? 'open' : rawState;
+        if (e.accepted === false || reportSpeculative(e) || (state && !AGENDA_STATES.includes(state))) continue;
         out.push({ key, what, with: partyText(e.with ?? e.who, 60), where: partyText(e.where, 80), when: partyText(e.when, 60), due: partyText(e.due, 40),
             kind: AGENDA_KINDS.includes(kind) ? kind : 'meeting', state: AGENDA_STATES.includes(state) ? state : state === 'moved' ? 'open' : 'open' });
     }
@@ -12451,15 +12598,19 @@ function agendaRead(chat, st) {
     const lastId = msgs.length ? msgs[msgs.length - 1].id : null;
     const idxOf = new Map(chat.map((m, i) => [m.id, i]));
     const items = [];
-    const find = (key) => items.find(x => agendaSame(x.key, key)) || null;
+    const compatible = (x, row) => (!row?.with || !x.with || lockKey(row.with) === lockKey(x.with)) && (!row?.where || !x.where || lockKey(row.where) === lockKey(x.where));
+    const find = (key, row = null) => items.find(x => x.key === key && compatible(x, row)) || items.find(x => agendaSame(x.key, key) && compatible(x, row)) || null;
     for (const m of msgs) {
         const d = getSwipeData(m) || {};
         const e = hudAt.get(m.id);
         const at = e ? e.clock : null;
         const idx = idxOf.has(m.id) ? idxOf.get(m.id) : -1;
         for (const r of Array.isArray(d.agenda) ? d.agenda : []) {
-            let it = find(r.key);
-            if (!it) { it = { key: r.key, what: r.what, with: null, where: null, when: null, dueAt: null, kind: r.kind, state: 'open', madeAt: at, msgId: m.id, idx, from: 'story', changedIn: m.id, history: [] }; items.push(it); }
+            if (!r || typeof r.key !== 'string' || typeof r.what !== 'string') continue;
+            let it = find(r.key, r);
+            if (!it) {
+                const key = items.some(x => x.key === r.key) ? `${r.key} :: ${lockKey(r.with || '')} :: ${lockKey(r.where || '')}` : r.key;
+                it = { key, what: r.what, with: null, where: null, when: null, dueAt: null, kind: r.kind, state: 'open', madeAt: at, msgId: m.id, idx, from: 'story', changedIn: m.id, history: [] }; items.push(it); }
             if (r.with) it.with = r.with;
             if (r.where) it.where = r.where;
             if (r.when || r.due) { const v = agendaWhen(r.due, r.when, at, e && e.hud); if (r.when) it.when = r.when; if (v !== null) it.dueAt = v; else if (r.due) it.when = r.when || r.due; }
@@ -12480,7 +12631,7 @@ function agendaRead(chat, st) {
     }
     const edits = isPlainObject(g.edits) ? g.edits : {};
     for (const [k, ed] of Object.entries(edits)) {
-        const it = items.find(x => x.key === k) || find(k);
+        const it = find(k);
         if (!it || !ed || !ed.state) continue;
         const after = ed.after && idxOf.has(ed.after) ? idxOf.get(ed.after) : -1;
         if (it.idx > after) continue;
@@ -12508,7 +12659,7 @@ function agendaRequest(chat, st, userName, cfg) {
     const ac = agendaCfg(cfg);
     if (!ac.on || !ac.ask) return null;
     const json = `"agenda": [{"what": "what was agreed or set, a few words", "with": "who, or null", "where": "where, or null", "when": "when, as the story says it", "due": "that moment in the HUD's own date and time format, or null", "kind": "${AGENDA_KINDS.join('|')}", "state": "${AGENDA_STATES.join('|')}"}]`;
-    let rules = `"agenda": appointments, promises and set times involving ${userName} — made, started, kept, broken, moved or called off in ${userName}'s own last message or in this reply ("I'll meet you at the river tomorrow", "the exam is on Friday", "be back before dark"). One entry for each that changed, reusing the same "what" for one already listed; [] when nothing changed. "in_progress" once an ongoing activity actually starts; "kept" once it finishes or a one-off appointment is fulfilled, "missed" when its time passed without it, "cancelled" when called off. Report only — the story decides what the world does about it.`;
+    let rules = `"agenda": appointments, promises and set times involving ${userName} — only agreed commitments, externally established deadlines or activities actually begun; omit suggestions and unaccepted invitations. Changes are made, started, kept, broken, moved or called off in ${userName}'s own last message or in this reply ("I'll meet you at the river tomorrow", "the exam is on Friday", "be back before dark"). One entry for each that changed, reusing the same "what" for one already listed; [] when nothing changed. "in_progress" once an ongoing activity actually starts; "kept" once it finishes or a one-off appointment is fulfilled, "missed" when its time passed without it, "cancelled" when called off. Report only — the story decides what the world does about it.`;
     if (ac.tell && chat && st) {
         let open = [];
         try { open = hmsAgendaPanel(chat, st).items.filter(x => x.state === 'open' || x.state === 'in_progress'); } catch { open = []; }
@@ -13059,7 +13210,7 @@ function secretRead(chat, st, userName = null) {
         const e = hudAt.get(m.id);
         for (const r of Array.isArray(d.secrets) ? d.secrets : []) {
             const it = ensure(r.text, r.whose, r.mine || isUser(r.whose), 'story');
-            for (const n of r.knownBy) if (!isUser(n) && !it.knownBy.has(lockKey(n))) it.knownBy.set(lockKey(n), { name: n, how: r.how, at: e ? e.clock : null, msgId: m.id });
+            for (const n of Array.isArray(r.knownBy) && r.how ? r.knownBy : []) if (!isUser(n) && !it.knownBy.has(lockKey(n))) it.knownBy.set(lockKey(n), { name: n, how: r.how, at: e ? e.clock : null, msgId: m.id });
             it.changedIn = m.id;
         }
     }
@@ -13409,6 +13560,7 @@ function simMindsNormalize(list) {
     for (const e of list) {
         if (!isPlainObject(e)) continue;
         const name = partyText(e.name, 60);
+        if (reportSpeculative(e)) continue;
         if (!name || out.some(x => lockKey(x.name) === lockKey(name))) continue;
         const r = { name };
         const feel = simFeel(e.feel ?? e.emotion ?? e.parrott);
@@ -13444,6 +13596,7 @@ function simAgendasNormalize(list) {
     for (const a of list) {
         if (!isPlainObject(a)) continue;
         const name = partyText(a.name ?? a.who, 60);
+        if (reportSpeculative(a)) continue;
         if (!name || out.some(x => lockKey(x.name) === lockKey(name))) continue;
         const r = { name, where: partyText(a.where ?? a.loc ?? a.location, 120), doing: partyText(a.doing ?? a.agenda, 160), why: partyText(a.why, 140),
             until: partyText(a.until ?? a.end, 60), next: partyText(a.next ?? a.goal, 120) };
@@ -13472,6 +13625,9 @@ function simSureOf(v) {
     if (/^(wrong|false|mistaken|misbel)/.test(s)) return 'wrong';
     return null;
 }
+function reportSpeculative(row) {
+    return row?.speculative === true || row?.confirmed === false || /^(?:guess(?:ed)?|speculat(?:ion|ive)|hypothetical|unsupported|unconfirmed|unsure|uncertain)$/i.test(String(row?.certainty ?? row?.status ?? '').trim());
+}
 function simLearnedNormalize(list) {
     if (!Array.isArray(list)) return null;
     const out = [];
@@ -13479,12 +13635,15 @@ function simLearnedNormalize(list) {
         if (!isPlainObject(f)) continue;
         const who = partyText(f.who ?? f.name, 60), fact = partyText(f.fact ?? f.what, 200);
         if (!who || !fact) continue;
-        let how = simHowOf(f.how ?? f.vector);
+        const how = simHowOf(f.how ?? f.vector);
         let from = partyText(f.from ?? f.by, 60);
         const tb = String(f.how ?? '').match(/told[_ ]?by[:\s]+(.+)$/i);
         if (tb && !from) from = partyText(tb[1], 60);
-        if (!how && from) how = 'told';
-        out.push({ who, fact, how: how || null, from: from && !/^(null|none)$/i.test(from) ? from : null, sure: simSureOf(f.sure ?? f.confidence) || 'certain' });
+        if (from && /^(null|none)$/i.test(from)) from = null;
+        let sure = simSureOf(f.sure ?? f.confidence) || (how && !['guessed', 'gossip'].includes(how) ? 'certain' : 'unsure');
+        if (sure !== 'wrong' && (!how || how === 'guessed' || reportSpeculative(f))) sure = 'unsure';
+        else if (sure === 'certain' && how === 'gossip') sure = 'partly';
+        out.push({ who, fact, how, from, sure });
     }
     return out.slice(0, 12);
 }
@@ -13526,7 +13685,7 @@ function simReplies(chat, excludeId = null) {
     let prev = null;
     for (const m of chat || []) {
         if (!m || m.role !== 'assistant' || (excludeId && m.id === excludeId)) continue;
-        if (m.hidden === true || m.is_hidden === true || (m.metadata && m.metadata.hidden === true)) continue;
+        if (!trackingMessageVisible(m)) continue;
         const d = getSwipeData(m) || {};
         const hud = simHudOf(m);
         if (!hud && !simHasData(d)) continue;          // a greeting page, an OOC answer
@@ -13555,31 +13714,19 @@ function simReplies(chat, excludeId = null) {
 
 function simYouKeys(userName) {
     const s = new Set(['you', 'player', 'the player', 'user', '{{user}}', 'protagonist', 'the protagonist', 'pc', 'mc', 'yourself']);
-    if (userName) { const u = lockKey(userName); if (u) { s.add(u); const first = u.split(/\s+/)[0]; if (first.length >= 3) s.add(first); } }
+    if (userName) { const u = lockKey(userName); if (u) { s.add(u); } }
     return s;
 }
 /** One key per person across every report: exact name, a party alias, or a longer form of a known name. */
 function simKeyer(roster, you) {
     const known = new Map();
     const fn = (name) => {
-        let k = lockKey(String(name ?? '').replace(/\s+/g, ' ')).replace(/^(the|a|an)\s+/, '');
+        let k = lockKey(String(name ?? '').replace(/\s+/g, ' '));
         if (!k) return null;
-        if (you.has(k)) return SIM_YOU;
-        const m = roster && roster.length ? partyMatch(roster, name) : null;
-        if (m) k = m.key;
-        else if (!known.has(k)) {
-            let hit = null;
-            for (const kk of known.keys()) if (kk.startsWith(k + ' ') || k.startsWith(kk + ' ')) { hit = kk; break; }
-            if (!hit) {
-                // "Kushida" is "Kikyō Kushida" when only one known name holds every word of it
-                const words = (x) => x.split(/\s+/).filter(w => w.length >= 3);
-                const mine = words(k);
-                const cands = mine.length ? [...known.keys()].filter(kk => kk !== SIM_YOU && (mine.every(w => words(kk).includes(w)) || (words(kk).length && words(kk).every(w => mine.includes(w))))) : [];
-                if (cands.length === 1) hit = cands[0];
-            }
-            if (hit) k = hit;
-        }
-        if (!known.has(k)) known.set(k, String(name).replace(/\s+/g, ' ').trim());
+        const member = partyMatch(roster, name);
+        if (member) k = lockKey(member.key || member.name);
+        else if (you.has(k)) return SIM_YOU;
+        if (!known.has(k)) known.set(k, String(member?.name || name).replace(/\s+/g, ' ').trim());
         return k;
     };
     fn.known = known;
@@ -13755,6 +13902,8 @@ function simSameFact(a, b) {
 }
 
 function simLearn(knows, f, i, e, keyOf) {
+    f = simLearnedNormalize([f])?.[0];
+    if (!f) return;
     const key = keyOf(f.who);
     if (!key || key === SIM_YOU) return;
     let k = knows.get(key);
@@ -13837,8 +13986,9 @@ function simFold(chat, st, opt = {}) {
     const minds = new Map(), pairs = new Map(), knows = new Map(), agendas = new Map();
     rep.live.forEach((e, i) => {
         const d = e.d;
-        if (Array.isArray(d.minds)) for (const r of d.minds) simApplyMind(minds, pairs, r, i, e, o);
+        if (Array.isArray(d.minds)) for (const r of d.minds) if (isPlainObject(r) && !reportSpeculative(r)) simApplyMind(minds, pairs, r, i, e, o);
         if (Array.isArray(d.agendas)) for (const a of d.agendas) {
+            if (!isPlainObject(a) || reportSpeculative(a)) continue;
             const k = keyOf(a.name);
             if (!k || k === SIM_YOU) continue;
             const prev = agendas.get(k);
@@ -14063,7 +14213,7 @@ function simStateText(fold, chat, userName) {
             const pick = [...facts.filter(f => f.sure === 'wrong'), ...facts.filter(f => f.sure !== 'wrong')].slice(0, 4);
             kn.push(`${fold.knows.get(k).name}: ${pick.map(f => `${f.fact} (${[f.how === 'told' && f.from ? `told by ${f.from}` : f.how, f.sure === 'wrong' ? 'a false belief' : f.sure].filter(Boolean).join(', ')})`).join('; ')}`);
         }
-        if (kn.length) lines.push(`They know: ${kn.join('. ')}.`);
+        if (kn.length) lines.push(`Knowledge and beliefs (certainty is per entry; do not share between characters): ${kn.join('. ')}.`);
     }
     if (sc.chekhov) {
         const cv = simChekhovView(fold);
@@ -14098,18 +14248,18 @@ function simRequest(fold, userName, skip = new Set()) {
     const u = userName || 'the player';
     if (sc.on) {
         json.push(`"minds": [{"name": "…", "feel": "primary>secondary>tertiary", "level": "low|med|high", "at": "who it is aimed at", "tfdy": "T+1 D-1, or empty", "iw": 2, "facet": "the facet leading now", "mask": "held|cracking|off", "toward": [{"name": "you${sc.pairs === 'all' ? ', or someone present' : ''}", "moves": "philia+1 misos-1, or empty", "why": "what moved them", "gate": "up|down|same", "E": "open|sealed", "L": "open|sealed", "filters": "soc crack, val strain, or empty", "debt": "a wrong not made good, or null", "paid": false, "intent": "what they want from them", "mode": "${SIM_MODES.join('|')}"}]}]`);
-        let r = `"minds" (FrankenSIM's Aether): one entry per named character present, never ${u}, for what goes on inside them by the end of this reply. Report what the story shows; it never decides what they do. "feel" is their emotion named by where it leads, as a Parrott path (love|joy|surprise|anger|sadness|fear > secondary > tertiary); "at" is who it is aimed at. "tfdy": only what this reply changed in their ambient feeling, T tenderness, F fury, D dread, Y yearning, each by 1 at most, and only for something that happened. "iw": how warm they show themselves (0 frostbound, 1 cool, 2 temperate, 3 warm, 4 fervent); 2 unless there is a reason. "facet": the side of them that leads right now; "mask": whether the face they wear holds.`;
+        let r = `"minds" (FrankenSIM's Aether): one entry per named character present, never ${u}, for what goes on inside them by the end of this reply. Report only established card traits and inner states explicitly shown in the story; do not invent motives from a gesture, a possible interpretation or an imagined off-screen event. Omit unsupported readings; this report never decides what they do. "feel" is their emotion named by where it leads, as a Parrott path (love|joy|surprise|anger|sadness|fear > secondary > tertiary); "at" is who it is aimed at. "tfdy": only what this reply changed in their ambient feeling, T tenderness, F fury, D dread, Y yearning, each by 1 at most, and only for something that happened. "iw": how warm they show themselves (0 frostbound, 1 cool, 2 temperate, 3 warm, 4 fervent); 2 unless there is a reason. "facet": the side of them that leads right now; "mask": whether the face they wear holds.`;
         r += ` "toward": how they feel about ${u} ("you")${sc.pairs === 'all' ? ' and about anyone else present they deal with' : ''}. "moves": only the feelings this reply moved, each by ${sc.maxStep} at most: eros desire, ludus play, philia friendship, pragma partnership and reliance, storge belonging, agape selfless care, misos hate, eris strife, echthros enmity, stasis stuck and resisting, adiaphora indifference, phthonos envy. "gate" (dormant, attentive, aware, longing, open) moves one step at most, for an event, never for pressure. "E" and "L": whether the feeling shows in what they do and in what they say. "filters" hold the feeling back, soc (what others would think), val (their own values), comp (whether they fit), rel (ties they already have): "crack" loosens one, "strain" tightens it. "debt": a wrong done to them and not made good; it stays until "paid": true.`;
         r += ` Someone the minds state does not list yet also gets "temperament" (sanguine|choleric|melancholic|phlegmatic) and "facets" (5-7 words), from their card; a pair it does not list gets "start": all twelve feelings, 3-20, as their card and history put them. A minor, or family, never gets eros or a romantic mode.`;
         rules.push(r);
     }
     if (sc.agendas) {
         json.push('"agendas": [{"name": "…", "where": "place", "doing": "what", "why": "why", "until": "HH:MM, or the event that ends it", "next": "what they mean to do after, or null"}]');
-        rules.push(`"agendas": what named characters who matter now are doing, here or elsewhere: the people present say what they were doing before this scene and whether they still mean to go back to it; the absent go on with their own lives. Nobody jumps between places: to get somewhere they travel, and the HUD clock has to allow it. Only who changed or is new, up to 8; [] when nothing changed.`);
+        rules.push(`"agendas": what named characters who matter now are doing, here or elsewhere: the people present say what they were doing before this scene and whether they still mean to go back to it; report absent characters only when their activity is established by narration or a received report, never by imagining what they must be doing. Nobody jumps between places: to get somewhere they travel, and the HUD clock has to allow it. Only who changed or is new, up to 8; [] when nothing changed.`);
     }
     if (sc.knowledge) {
         json.push('"learned": [{"who": "…", "fact": "one line", "how": "saw|heard|told|evidence|message|common|gossip|guessed", "from": "who told them, or null", "sure": "certain|partly|unsure|wrong"}]');
-        rules.push(`"learned": what a named character newly found out in this reply that matters (about ${u}, a secret, an event) and how it reached them. Nobody knows what never reached them: no sight, word, evidence or message, no knowledge. "wrong" is a false belief they now hold. [] when nobody learned anything new.`);
+        rules.push(`"learned": what a named character newly found out in this reply that matters (about ${u}, a secret, an event) and how it reached them. Nobody knows what never reached them: no sight, word, evidence or message, no knowledge. Private thoughts, narrator knowledge, another mind entry and a shared location are not information transfer. A guess remains unsure and gossip remains unverified; never upgrade them to certain. "wrong" is a false belief they now hold. [] when nobody learned anything new.`);
     }
     if (sc.chekhov) {
         json.push('"chekhov": {"load": [{"what": "a detail this reply planted that should pay off later", "w": 1, "lock": "null, or T:HH:MM, C:name, D:id, K:condition"}], "fired": ["ids paid off in this reply"], "drop": ["ids that no longer fit"]}');
@@ -15273,10 +15423,12 @@ function pinsReminder(st) {
 
 // Separate mode for HMS chats: only the companion block comes from an extra call.
 async function hmsCompanionCall(chatId, chat, target, committed, locks) {
+    const targetAt = chat.findIndex(m => m.id === target.id);
+    if (targetAt >= 0) chat = chat.slice(0, targetAt + 1);
     const userName = await getUserName(chatId);
     const depth = Math.max(1, Number(settings.updateDepth) || 4);
     const targetIdx = chat.findIndex(m => m.id === target.id);
-    const history = chat.slice(0, targetIdx + 1).filter(m => m.role !== 'system' && (m.extra?.hidden !== true || m.id === target.id)).slice(-depth);
+    const history = chat.slice(0, targetIdx + 1).filter(m => m.role !== 'system' && (trackingMessageVisible(m) || m.id === target.id)).slice(-depth);
     // Who is present, what they are and how they relate all live in their lorebook entries.
     const compHud = isHmsChat(chatId, null, chat) ? parseHud(textOf(latestHudMessage(chat)?.content)) : null;
     const compScene = compHud ? (compHud.lines || []).map(l => l.text).join('\n') : '';
@@ -16034,7 +16186,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
                     for (const k of Object.keys(c.open)) if (c.open[k] === ch.id) delete c.open[k];
                 } else {
                     if (typeof payload.title === 'string' && payload.title.trim()) { ch.title = payload.title.trim().slice(0, 80); ch.titleByUser = true; }
-                    if (typeof payload.summary === 'string') { ch.summary = payload.summary.slice(0, 6000); if (!ch.summarizedAt && ch.summary) ch.summarizedAt = Date.now(); }
+                    if (typeof payload.summary === 'string') { ch.summarySource = chapterRangeSource(await chatApi.getMessages(payload.chatId), ch); ch.summary = payload.summary.slice(0, 6000); if (!ch.summarizedAt && ch.summary) ch.summarizedAt = Date.now(); }
                     if (typeof payload.inPrompt === 'boolean') ch.inPrompt = payload.inPrompt;
                 }
                 await saveChatState(payload.chatId, st);

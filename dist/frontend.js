@@ -1125,7 +1125,7 @@ export function setup(ctx) {
         id: 'rpg-companion-hms',
         title: 'RPG Companion (HMS)',
         shortName: 'RPG',
-        headerTitle: 'RPG Companion HMS Edition 2.8.16 compatibility candidate',
+        headerTitle: 'RPG Companion HMS Edition 2.8.17 — Stability & Tracking Integrity',
         description: 'The side panel for HMS bots: the HUD as cards, people, quests, the map, fights, the Chronicle, and a guide',
         keywords: ['rpg', 'hms', 'tracker', 'hud', 'quests', 'dice', 'guide'],
         iconSvg: ICON_SVG
@@ -4810,13 +4810,13 @@ export function setup(ctx) {
                 })() : null));
         }
         if (pv.on.objectives) {
-            const ICON = { active: '\u25B8', done: '\u2713', failed: '\u2717' };
+            const ICON = { active: '\u25B8', done: '\u2713', failed: '\u2717', abandoned: '\u2298' };
             const input = h('input', { type: 'text', placeholder: 'Add an objective of your own', 'aria-label': 'Add an objective of your own' });
             const add = () => { const v = input.value.trim(); if (!v) return; input.value = ''; send({ type: 'objective_mine', chatId: state.chatId, op: 'add', text: v }); };
             input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
             out.push(h('div', { class: 'rpgc-set rpgc-objectives' }, h('h4', null, 'Objectives'),
-                pv.objectives.length ? h('ul', { class: 'rpgc-checklist' }, pv.objectives.map(o => h('li', { class: o.state === 'done' ? 'met' : o.state === 'active' ? 'active' : 'failed' },
-                    h('span', { 'aria-hidden': 'true' }, ICON[o.state] || '\u25B8'), ` ${o.text}`, o.quest ? h('span', { class: 'rpgc-chip' }, o.quest) : null))) : null,
+                pv.objectives.length ? h('ul', { class: 'rpgc-checklist' }, pv.objectives.map(o => h('li', { class: o.state === 'done' ? 'met' : o.state === 'active' ? 'active' : o.state === 'failed' ? 'failed' : '' },
+                    h('span', { 'aria-hidden': 'true' }, ICON[o.state] || '\u25B8'), ` ${o.text}`, o.state === 'abandoned' ? h('span', { class: 'rpgc-chip' }, 'Abandoned') : null, o.quest ? h('span', { class: 'rpgc-chip' }, o.quest) : null))) : null,
                 pv.mine.length ? h('ul', { class: 'rpgc-checklist mine' }, pv.mine.map(o => h('li', { class: o.done ? 'met' : '' },
                     (() => { const cb = h('input', { type: 'checkbox', 'aria-label': `Done: ${o.text}` }); cb.checked = !!o.done; cb.addEventListener('change', () => send({ type: 'objective_mine', chatId: state.chatId, op: 'toggle', id: o.id })); return cb; })(),
                     ` ${o.text} `, h('button', { class: 'rpgc-mini', 'aria-label': `Remove: ${o.text}`, onclick: () => send({ type: 'objective_mine', chatId: state.chatId, op: 'remove', id: o.id }) }, '\u2715')))) : null,
@@ -5449,7 +5449,7 @@ export function setup(ctx) {
             const det = h('details', { class: 'rpgc-chapter ' + c.kind + (c.summarized ? '' : ' unsummarised') },
                 h('summary', null, h('span', { class: 'rpgc-chip kind' }, CH_KIND[c.kind] || 'Chapter'), h('b', null, c.title),
                     h('span', { class: 'rpgc-note' }, ` ${chapterSpan(c)}`), c.status === 'open' ? h('span', { class: 'rpgc-chip here' }, 'open') : null,
-                    !c.summarized ? h('span', { class: 'rpgc-chip' }, 'not summarised') : c.inPrompt ? null : h('span', { class: 'rpgc-chip' }, 'left out')),
+                    c.stale ? h('span', { class: 'rpgc-chip' }, 'source changed — excluded from prompt') : !c.summarized ? h('span', { class: 'rpgc-chip' }, 'not summarised') : c.inPrompt ? null : h('span', { class: 'rpgc-chip' }, 'left out')),
                 editing ? h('div', { class: 'rpgc-set' }, tIn, ta, h('div', { class: 'rpgc-row' },
                     h('button', { class: 'rpgc-btn primary', onclick: () => { send({ type: 'chapter_edit', chatId: state.chatId, id: c.id, title: tIn.value, summary: ta.value }); state.chEdit = null; } }, 'Save'),
                     h('button', { class: 'rpgc-btn', onclick: () => { state.chEdit = null; render(); } }, 'Cancel')))
@@ -6247,7 +6247,7 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
             if (!popWin || popWin.closed) {
                 popWin = window.open('', 'rpgc_popout', 'width=460,height=860');
                 if (!popWin) { state.status = { kind: 'warning', text: 'The browser blocked the pop-out window. Allow pop-ups for Lumiverse and try again.' }; const s = S(); s.uiPanelMode = 'drawer'; return applyPanelMode(); }
-                popWin.document.title = 'RPG Companion HMS Edition 2.8.16 compatibility candidate';
+                popWin.document.title = 'RPG Companion HMS Edition 2.8.17 — Stability & Tracking Integrity';
                 syncPopoutLook(popWin);
                 try { if (!popLookObs) { popLookObs = new MutationObserver(() => syncPopoutLook(popWin)); popLookObs.observe(document.documentElement, { attributes: true }); if (document.body) popLookObs.observe(document.body, { attributes: true, attributeFilter: ['class'] }); } } catch { /* optional */ }
                 popWin.addEventListener('beforeunload', () => { popWin = null; if (panelMode() === 'popout') { const s = S(); s.uiPanelMode = 'drawer'; saveSettings(false); applyPanelMode(); render(); } });

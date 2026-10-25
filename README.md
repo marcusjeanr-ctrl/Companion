@@ -1,4 +1,7 @@
-> Six-Sided World compatibility fork of [RPG Companion HMS](https://github.com/TenderTriper/rpg-companion-hms). Version 2.8.16 compatibility candidate. The Reporter preset and other world features come from the upstream package. See [compatibility notes](tools/SIX_SIDED_COMPAT.md) for scope and live validation limits.
+> Six-Sided World compatibility fork of [RPG Companion HMS](https://github.com/TenderTriper/rpg-companion-hms). Version 2.8.17 — Universal Stability & Tracking Integrity. The Reporter preset and other world features come from the upstream package. See [compatibility notes](tools/SIX_SIDED_COMPAT.md) for scope and live validation limits.
+
+The 2.8.17 fixes apply to the shared Companion engines, including classic tracking. Read the [categorized audit and validation report](tools/AUDIT_2_8_17.md). Run all regression suites with `node tools/run_tests.cjs`. Existing saves and the extension identifier are preserved.
+
 
 # RPG Companion HMS Edition 2.8 beta
 

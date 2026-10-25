@@ -71,9 +71,10 @@ async function main() {
     const st=await sw.ctx.getChatState('test');assert(sw.ctx.spellKnown(sw.messages,st).has('earth lance'));
     // Migration: old automatic caches must not overrule active-swipe evidence.
     st.spellbook.push({name:'Earth Lance',from:'story'});
+    const originalContent=sw.messages[1].content;
     sw.messages[1].swipe_id=1;sw.messages[1].content=base+'\nThe attempt failed.';
     assert.equal(sw.ctx.spellKnown(sw.messages,st).has('earth lance'),false);
-    sw.messages[1].swipe_id=0;assert(sw.ctx.spellKnown(sw.messages,st).has('earth lance'));
+    sw.messages[1].swipe_id=0;sw.messages[1].content=originalContent;assert(sw.ctx.spellKnown(sw.messages,st).has('earth lance'));
     console.log('Audit repairs passed: two calendars, month/year rollovers, deadlines, birthdays, hidden ranks, multiple styles, five continents, complete Saga/sub-arcs, and swipe/forget/relearn/mastery/manual spell lifecycles.');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

@@ -16,6 +16,9 @@ for (const filename of files) {
             content: hud(`Training Room ${i % 12}`, `07:${String(i % 60).padStart(2, '0')}`),
             metadata: { rpg_companion: { swipes: { 0: { ...data, survival: data.you } } } } });
     }
+    if (process.env.COMPANION_BIND_READINGS === '1' && typeof rt.ctx.readingSource === 'function') {
+        for (const m of rt.messages) if (m.metadata) m.metadata.rpg_companion.sources = { 0: rt.ctx.readingSource(m.content) };
+    }
     rt.ctx.history = rt.messages;
     rt.run(`const benchmarkState = emptyChatState(); userNameCache.set('bench', 'Marcus King');`);
     // Optional local card files supply the same full lore pool to each version.
