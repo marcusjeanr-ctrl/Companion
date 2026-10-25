@@ -2217,7 +2217,7 @@ async function pushState(chatId) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.3-rc.1';
+const RPGC_VERSION = '2.8.4-rc.1';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -8256,7 +8256,7 @@ function oocGuide(chatId) {
 /** The message that asks it in the chat, in the bot's own form: "[OOC: …]" or "OOC guide: …". */
 function oocChatText(g, question) {
     const q = String(question || '').trim();
-    const t = g ? g.trigger : 'OOC guide:';
+    const t = g ? g.trigger : 'OOC:';
     return /^\[/.test(t) ? `${t.replace(/:\s*$/, ':')} ${q}]` : `${t} ${q}`;
 }
 
@@ -8302,8 +8302,8 @@ async function oocAsk(chatId, question, guideName = '') {
         const hud = hudMsg ? findHud(textOf(hudMsg.content)) : null;
         const who = String(guideName || '').trim().slice(0, 60);
         const sys = [
-            `You answer an out-of-character question from ${userName}, the player of this game. You are its OOC guide${g ? `, ${who || g.name}` : ''}. ` +
-            `Follow the guide's own rules below exactly: its voice, its fourth-wall awareness and its hard rules. Never write a HUD or a WORLD STATE block, never continue the story, and no time passes. ` +
+            `You answer an out-of-character question from ${userName}, the player of this game. ${g ? `You are its OOC guide, ${who || g.name}. Follow the guide's own rules below exactly: its voice, its fourth-wall awareness and its hard rules.` : 'Use the active character card and lorebook as reference; no named OOC guide entry was found.'} ` +
+            `Never write a HUD or a WORLD STATE block, never continue the story, and no time passes. ` +
             `Answer from the reference material; when something is not in it, say plainly that you do not know rather than inventing a rule or a command. Keep it to a paragraph or two unless a list of commands is asked for.` +
             (who && g && who.toLowerCase() !== g.name.toLowerCase() ? ` The player asked for ${who} as the guide: use that character's voice and keep every rule.` : '') +
             (modelLangLine('your answer') ? ' ' + modelLangLine('your answer') + ' Commands stay exactly as the bot spells them.' : ''),
@@ -8323,7 +8323,7 @@ async function oocAsk(chatId, question, guideName = '') {
         if (!a) return null;
         const st = await getChatState(chatId);
         if (!Array.isArray(st.ooc)) st.ooc = [];
-        st.ooc.push({ q, a: a.slice(0, 6000), guide: who || (g ? g.name : 'the guide'), at: Date.now() });
+        st.ooc.push({ q, a: a.slice(0, 6000), guide: g ? who || g.name : 'OOC', at: Date.now() });
         st.ooc = st.ooc.slice(-OOC_LOG_MAX);
         await saveChatState(chatId, st);
         return a;
@@ -8335,8 +8335,8 @@ async function oocAsk(chatId, question, guideName = '') {
 function oocPanel(chatId, st) {
     const g = oocGuide(chatId);
     const log = Array.isArray(st.ooc) ? st.ooc.slice(-OOC_LOG_MAX) : [];
-    if (!g && !log.length) return { guide: null, trigger: 'OOC guide:', log: [], busy: oocBusy.has(chatId) };
-    return { guide: g ? g.name : null, trigger: g ? g.trigger : 'OOC guide:', log, busy: oocBusy.has(chatId) };
+    if (!g && !log.length) return { guide: null, trigger: 'OOC:', log: [], busy: oocBusy.has(chatId) };
+    return { guide: g ? g.name : null, trigger: g ? g.trigger : 'OOC:', log, busy: oocBusy.has(chatId) };
 }
 
 // ───────────────────────────── The Arc line guard ─────────────────────────────
@@ -8669,6 +8669,18 @@ function worldLore(chatId, name) {
     return text.length > 280 ? text.slice(0, 277).replace(/\s+\S*$/, '') + '\u2026' : text;
 }
 
+/** A mana tier's own description, not another lore entry that happens to contain "Mana Capacity". */
+function mtManaTierLore(chatId, tier) {
+    const pool = lorePool.get(chatId);
+    if (!pool || !tier) return null;
+    const name = String(tier).trim();
+    if (!/^[\p{L}\s-]{2,35}$/u.test(name)) return null;
+    const book = pool.entries.find(e => (e.key || []).some(k => /^mana capacity$/i.test(k.trim())) && /\bTHE TIERS\b/i.test(e.content || ''));
+    if (!book) return null;
+    const line = String(book.content).split('\n').find(s => new RegExp(`^\\s*[-•]\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(?:\\(|:|[—–-])`, 'i').test(s));
+    return line ? line.replace(/^\s*[-•]\s*/, '').replace(/\*\*/g, '').trim().slice(0, 280) : null;
+}
+
 function worldReZero(chatId, lines, st) {
     const deaths = worldFind(lines, /^Deaths:\s*(\d+)/i);
     const scent = worldFind(lines, /^Witch's Scent:\s*(?:Lv\.?\s*)?(.+)$/i);
@@ -8965,6 +8977,8 @@ function worldMushoku(chatId, lines, st, chat = null) {
     const date = dragon ? { year: Number(dragon[1]), month: Number(dragon[3]), monthName: dragon[2].trim(), day: Number(dragon[4]) } : yr ? { year: Number(yr[1]), month: null, monthName: null, day: Number(yr[2]) } : null;
     const birth = worldFind(lines, /^Birth:\s*K\.?\s*(\d+)\s*\|\s*Race:\s*([^|]+?)\s*\|\s*Age:\s*(\d+)\s*\|\s*Origin:\s*(.+)$/i);
     const born = worldFind(lines, /\bAge:\s*(\d+)\s*\(born\s*K\.?\s*(\d+)(?:\s*,\s*Month\s*(\d{1,2}))?\)/i);
+    const bornField = worldFind(lines, /(?:^|\|)\s*(?:Birth|Born):\s*K\.?\s*(\d{3,4})(?:\s*,\s*Month\s*(\d{1,2}))?/i);
+    const ageField = worldFind(lines, /\bAge:\s*(\d{1,3})\b/i);
     const race = worldFind(lines, /\bRace:\s*([^|]+?)(?:\s*\||$)/i);
     const origin = worldFind(lines, /\bOrigin:\s*([^|]+?)(?:\s*\||$)/i);
     const adv = worldFind(lines, /^Adventurer:\s*([A-S])-?\s*Rank(?:\s*\|\s*(Solo|Party:\s*([^|]+?)))?(?:\s*\|\s*Clan:\s*(.+))?$/i);
@@ -8980,10 +8994,10 @@ function worldMushoku(chatId, lines, st, chat = null) {
     const w = isPlainObject(st.world) ? st.world : {};
     return {
         year: date ? date.year : null, month: date ? date.month : null, monthName: date ? date.monthName : null, day: date ? date.day : null, period: yr && yr[4] ? yr[4] : null,
-        birth: birth ? Number(birth[1]) : born ? Number(born[2]) : null, birthMonth: born && born[3] ? Number(born[3]) : null, race: birth ? birth[2].trim() : race ? race[1].trim() : null, age: birth ? Number(birth[3]) : born ? Number(born[1]) : null, origin: birth ? birth[4].trim() : origin ? origin[1].trim() : null,
+        birth: birth ? Number(birth[1]) : born ? Number(born[2]) : bornField ? Number(bornField[1]) : null, birthMonth: born && born[3] ? Number(born[3]) : bornField && bornField[2] ? Number(bornField[2]) : null, race: birth ? birth[2].trim() : race ? race[1].trim() : null, age: birth ? Number(birth[3]) : born ? Number(born[1]) : ageField ? Number(ageField[1]) : null, origin: birth ? birth[4].trim() : origin ? origin[1].trim() : null,
         adventurer: adv ? { rank: adv[1], party: adv[3] ? adv[3].trim() : (adv[2] && /solo/i.test(adv[2]) ? null : null), solo: !!(adv[2] && /solo/i.test(adv[2])), clan: adv[4] ? adv[4].trim() : null } : null,
         mana: one(/^Mana Capacity:\s*([^|]+)/i), reserve: one(/\bReserve:\s*([^|]+)/i), casting: one(/^Casting Method:\s*(.+)$/i) || (one(/^Voiceless Casting:\s*(.+)$/i) ? `Voiceless (${one(/^Voiceless Casting:\s*(.+)$/i)})` : null), touki: one(/^Touki(?: \(Battle Aura\))?:\s*(.+)$/i), canon: one(/^Canon:\s*([^|]+)/i), agency: one(/^Narrative Mode:\s*([^|]+)/i),
-        manaLore: worldLore(chatId, 'mana capacity'), toukiLore: /^none/i.test(one(/^Touki:\s*(.+)$/i) || 'none') ? null : worldLore(chatId, 'touki'),
+        manaLore: mtManaTierLore(chatId, one(/^Mana Capacity:\s*([^|]+)/i)), toukiLore: /^none/i.test(one(/^Touki:\s*(.+)$/i) || 'none') ? null : worldLore(chatId, 'touki'),
         martial: (() => {
             const sword = one(/^Sword Style:\s*(.+)$/i);
             const list = sword ? (() => { const m = sword.match(/^(.+?)\s*\(([^)]+)\)$/); return m ? ladder(`${m[1]}: ${m[2]}`, MT_MARTIAL) : []; })() : ladder(one(/^Martial Style:\s*(.+)$/i), MT_MARTIAL);
@@ -12069,8 +12083,8 @@ function agendaCfg(cfg) {
 }
 
 /** When something falls due, in HUD-clock minutes: the HUD's own format first, then plain words ("tomorrow at dawn", "in three days"). */
-function agendaWhen(due, when, at) {
-    for (const t of [due, when]) { if (!t) continue; try { const v = hmsParseWhen(t, at); if (v !== null && v !== undefined && Number.isFinite(v)) return v; } catch { /* next */ } }
+function agendaWhen(due, when, at, hud = null) {
+    for (const t of [due, when]) { if (!t) continue; try { const v = hmsParseWhen(t, at, hud); if (v !== null && v !== undefined && Number.isFinite(v)) return v; } catch { /* next */ } }
     if (at === null || at === undefined) return null;
     const t = String(when || due || '').toLowerCase();
     if (!t) return null;
@@ -12140,7 +12154,7 @@ function agendaRead(chat, st) {
             if (!it) { it = { key: r.key, what: r.what, with: null, where: null, when: null, dueAt: null, kind: r.kind, state: 'open', madeAt: at, msgId: m.id, idx, from: 'story', changedIn: m.id, history: [] }; items.push(it); }
             if (r.with) it.with = r.with;
             if (r.where) it.where = r.where;
-            if (r.when || r.due) { const v = agendaWhen(r.due, r.when, at); if (r.when) it.when = r.when; if (v !== null) it.dueAt = v; else if (r.due) it.when = r.when || r.due; }
+            if (r.when || r.due) { const v = agendaWhen(r.due, r.when, at, e && e.hud); if (r.when) it.when = r.when; if (v !== null) it.dueAt = v; else if (r.due) it.when = r.when || r.due; }
             if (r.kind) it.kind = r.kind;
             if (r.state !== it.state) it.history.push({ from: it.state, to: r.state, at });
             it.state = r.state; it.idx = idx; it.changedIn = m.id;
@@ -12150,7 +12164,7 @@ function agendaRead(chat, st) {
         if (!a || !a.what) continue;
         const key = lockKey(a.what);
         if (find(key)) continue;
-        items.push({ key, what: a.what, with: a.with || null, where: a.where || null, when: a.when || null, dueAt: agendaWhen(null, a.when, a.at ?? now), kind: a.kind || 'promise', state: 'open', madeAt: a.at ?? null, msgId: null, idx: -1, from: 'you', changedIn: null, history: [] });
+        items.push({ key, what: a.what, with: a.with || null, where: a.where || null, when: a.when || null, dueAt: agendaWhen(null, a.when, a.at ?? now, tl.length ? tl[tl.length - 1].hud : null), kind: a.kind || 'promise', state: 'open', madeAt: a.at ?? null, msgId: null, idx: -1, from: 'you', changedIn: null, history: [] });
     }
     const edits = isPlainObject(g.edits) ? g.edits : {};
     for (const [k, ed] of Object.entries(edits)) {
@@ -14620,10 +14634,28 @@ function questNormalize(list) {
 }
 
 /** An in-world time written freely ("Day 5, 18:00", "May 15, 00:00", "18:00") as HUD-clock minutes. */
-function hmsParseWhen(text, now) {
+function hmsParseWhen(text, now, hud = null) {
     if (!text) return null;
     const t = String(text);
     const c = hmsClock({ lines: [{ text: /^Armored Dragon Calendar:/i.test(t) ? t : t.replace(/,/, ' |') }] });
+    const named = t.match(/\bK\.?\s*(\d{3,4})\b[^\n]*?\bMonth\s*(\d{1,2})\b[^\n]*?\bDay\s*(\d{1,2})\b/i);
+    if (named) {
+        const year = Number(named[1]), month = Number(named[2]), day = Number(named[3]);
+        if (month >= 1 && month <= 12 && day >= 1 && day <= 30)
+            return ((year * 12 + month - 1) * 30 + day - 1) * 1440 + (c ? ((c.minutes % 1440) + 1440) % 1440 : 1439);
+    }
+    const day = !/\bYear\s*:\s*K\.?\s*\d+\b|\bArmored Dragon Calendar\s*:|\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\b/i.test(t)
+        ? t.match(/\bDay\s*:?\s*(\d{1,3})\b/i) : null;
+    if (day && now !== null && now !== undefined && Number.isFinite(now) && Math.floor(now / 1440) >= 300 * 360) {
+        const n = Number(day[1]);
+        const currentDay = Math.floor(now / 1440);
+        const yearStart = Math.floor(currentDay / 360) * 360;
+        const head = hud && Array.isArray(hud.lines) ? hud.lines.slice(0, 4).map(l => l.text).join(' ') : '';
+        const dragon = head.match(/Armored Dragon Calendar:[^\n]*?\(Month\s*(\d{1,2})\)/i);
+        const month = dragon ? Number(dragon[1]) : null;
+        const targetDay = month >= 1 && month <= 12 && n <= 30 ? yearStart + (month - 1) * 30 + n - 1 : yearStart + n - 1;
+        if (n >= 1 && n <= (month ? 30 : 360)) return targetDay * 1440 + (c ? ((c.minutes % 1440) + 1440) % 1440 : 1439);
+    }
     if (!c) {
         const d = t.match(/\bDay\s*(\d+)/i);
         if (d) return (Number(d[1]) - 1) * 1440 + 23 * 60 + 59;

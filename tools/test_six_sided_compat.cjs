@@ -8,12 +8,17 @@ function section(from, to) { const a = src.indexOf(from), b = src.indexOf(to, a 
 const code = [
  section('const HUD_HEAD_RE =', '/**\n * True when the HUD was replaced'),
  section('const WORLD_LABEL =', '// ── Expansions read from the bots'),
+ section('function mtManaTierLore(chatId,', 'function worldReZero('),
  section('const MT_ABBR =', '/** The panel payload for the world card'),
  section('/** In-world minutes from the HUD', 'function hmsSpan('),
  section('const ATLAS_TIER_RE =', '// ───────────────────────────── Positions and the room map'),
  section('function spellStanding(lines)', '/** What the story reports'),
  section('function spellStoryFold(chat)', '/** The spell list for the Magic card'),
  section('function plotCfg()', 'function objectivesNormalize(list)'),
+ section('const AGENDA_KINDS =', 'function agendaNormalize(list)'),
+ section('function agendaNormalize(list)', 'function agendaRequest('),
+ section('const OOC_TURN_RE =', '/** What the guide may draw on'),
+ section('function hmsParseWhen(text,', '/** The latest quest details'),
  section('const FAM_KIN_RE =', '/** Everyone in the family'),
  section('const GEAR_STATES =', 'function hmsGearPanel('),
  section('function gearRequest(chat,', 'async function hmsGearEdit('),
@@ -28,7 +33,7 @@ const code = [
  'function hmsFieldsOf(l) { return l.fields || []; }',
  'function hmsLabelIn(label,list) { return list.some(x => label.toLowerCase()===x.toLowerCase()); }',
  'function relSameWords(a,b) { return String(a).toLowerCase() === String(b).toLowerCase(); }',
- 'function hmsTimeline(chat) { return chat.filter(m => m.hud).map(m => ({msg:m,hud:m.hud,clock:100})); }',
+ 'function hmsTimeline(chat) { return chat.filter(m => m.hud).map(m => ({msg:m,hud:m.hud,clock:hmsClock(m.hud)?.minutes ?? 100})); }',
  'function relReadings(chat) { return chat.filter(m => m.role === "assistant"); }',
  'function pocketIsMessage() { return false; }',
  'function worldLore() { return null; }',
@@ -53,6 +58,10 @@ function evalExpr(expr) { return vm.runInContext(expr, ctx); }
 const six = `### WORLD STATE ###\nArmored Dragon Calendar: K417, Thawmoon (Month 2), Day 8 — Dragonsday | Season: Spring | Time: 07:15 (Early Morning)\n◆ Central Continent → Asura Kingdom → Fittoa Region → House King Estate → Training Yard\nRace: Human | Origin: Native | Age: 13 (born K404, Month 2)\nMana Capacity: Vast | Reserve: Full\nTouki (Battle Aura): Active\nSword Style: Sword God (Intermediate)\nMagic Tiers: Water (Intermediate), Earth (Intermediate), Fire (Beginner)\nVoiceless Casting: Active\nCanon: Living\nNarrative Mode: Strict Agency\nCurrent Arc: Sandbox\n***\nScene.`;
 const living = `### WORLD STATE ###\nYear: K.417 | Day: 8 | Time: 07:15\nLocation: ◆ Six-Faced World → Central Continent → Asura Kingdom → Buena Village\nBirth: K.404 | Race: Human | Age: 13 | Origin: Native\nMana Capacity: Monstrous\nCasting Method: Voiceless (Silent)\nTouki: Active\nMartial Style: Sword God Style: Intermediate\nMagic School: Water: Intermediate, Earth: Intermediate\nCurrent Arc: Arc 3: Demon Continent\n***\nScene.`;
 const h6 = ctx.parseHud(six), hl = ctx.parseHud(living);
+evalExpr('lorePool').set('test',{entries:[
+ {key:['Mana Capacity Expansion Ritual'],content:'Mana Capacity Expansion Ritual: Highly dangerous.'},
+ {key:['Mana Capacity'],content:'[MANA CAPACITY — TIERS]\nTHE TIERS\n- Vast (~6,000 MP): ~24 Advanced or ~6 Saint spells.\n- Average (~400 MP): ~8 Intermediate spells.'}
+]});
 assert.deepEqual(Array.from(h6.location), ['Central Continent','Asura Kingdom','Fittoa Region','House King Estate','Training Yard']);
 assert.equal(ctx.worldOf(ctx.worldLines(h6)), 'mushoku');
 assert.equal(ctx.worldOf(ctx.worldLines(hl)), 'mushoku');
@@ -68,9 +77,17 @@ const w6=ctx.worldMushoku('test',ctx.worldLines(h6),{}), wl=ctx.worldMushoku('te
 assert.equal(w6.year,417); assert.equal(w6.month,2); assert.equal(w6.day,8);
 assert.equal(w6.birth,404); assert.equal(w6.birthMonth,2); assert.equal(w6.age,13);
 assert.equal(w6.mana,'Vast'); assert.equal(w6.reserve,'Full'); assert.equal(w6.touki,'Active');
+assert.match(w6.manaLore,/^Vast \(~6,000 MP\)/);
+assert.equal(wl.manaLore,null);
 assert.equal(w6.magic[0].step,1); assert.equal(w6.magic[2].step,0);
 assert.equal(w6.martial[0].step,1); assert.equal(w6.agency,'Strict Agency'); assert.equal(w6.canon,'Living');
 assert.equal(wl.mana,'Monstrous'); assert.equal(wl.magic[0].step,1); assert.equal(wl.martial[0].step,1);
+const missingBirth=ctx.worldMushoku('test',ctx.worldLines(ctx.parseHud(six.replace('Age: 13 (born K404, Month 2)','Age: 13'))),{});
+assert.equal(missingBirth.birth,null);
+assert.equal(missingBirth.age,13);
+const standaloneBirth=ctx.worldMushoku('test',ctx.worldLines(ctx.parseHud(six.replace('Age: 13 (born K404, Month 2)','Age: 13 | Born: K404, Month 2'))),{});
+assert.equal(standaloneBirth.birth,404);
+assert.equal(standaloneBirth.birthMonth,2);
 assert.equal(ctx.spellStanding(h6.lines).voiceless,true); assert.equal(ctx.spellStanding(h6.lines).schools.get('water').step,1);
 assert.equal(ctx.spellStanding(hl.lines).schools.get('water').step,1);
 assert.equal(w6.saga.participation,'personal'); assert.equal(w6.saga.personalArc,'Sandbox');
@@ -78,6 +95,12 @@ assert.equal(wl.saga.participation,'explicit');
 assert.equal(ctx.hmsClockTest(h6).dated,true);
 const later=ctx.parseHud(six.replace('Day 8','Day 9'));
 assert.equal(ctx.hmsClockTest(later).minutes-ctx.hmsClockTest(h6).minutes,1440);
+assert.equal(ctx.agendaWhen('Day 9, 08:00','',ctx.hmsClockTest(h6).minutes,h6)-ctx.hmsClockTest(h6).minutes,24*60+45);
+assert.equal(ctx.agendaWhen('Day 9, 08:00','',ctx.hmsClockTest(hl).minutes,hl)-ctx.hmsClockTest(hl).minutes,24*60+45);
+assert.equal(ctx.agendaWhen('K417, Seedwake (Month 3), Day 1 — 08:00','',ctx.hmsClockTest(h6).minutes,h6)-ctx.hmsClockTest(h6).minutes,(30-8+1)*1440+45);
+assert.equal(ctx.agendaWhen(null,'tomorrow at dawn',ctx.hmsClockTest(h6).minutes,h6)-ctx.hmsClockTest(h6).minutes,22*60+45);
+const agendaChat=[{id:'a1',role:'assistant',hud:h6,data:{agenda:[{key:'steel lesson',what:'Steel lesson',when:'tomorrow morning',due:'Day 9, 08:00',kind:'meeting',state:'open'}]}}];
+assert.equal(ctx.hmsAgendaPanel(agendaChat,{},{}).items[0].dueIn,24*60+45);
 const monthEnd=ctx.parseHud(six.replace('Day 8','Day 30'));
 const nextMonth=ctx.parseHud(six.replace('Thawmoon (Month 2), Day 8','Seedwake (Month 3), Day 1'));
 assert.equal(ctx.hmsClockTest(nextMonth).minutes-ctx.hmsClockTest(monthEnd).minutes,1440);
@@ -103,6 +126,9 @@ const swiped={id:'s1',role:'assistant',swipe_id:1,metadata:{rpg_companion:{swipe
 assert.equal(ctx.mtEventLedger([swiped])[0].state,'prevented');
 assert.equal(ctx.plotNormalize({canonEvents:[{name:'Rumor',state:'predicted',detail:'maybe'}]}),null);
 assert.equal(ctx.famNormalize([{name:'Aldous',relation:'teacher'},{name:'Seraphina',relation:'mother'}]).length,1);
+assert.equal(ctx.oocChatText(null,'How does mana work?'),'OOC: How does mana work?');
+assert.equal(ctx.oocTurnIn([{id:'o1',role:'user',content:ctx.oocChatText(null,'How does mana work?')}]),true);
+assert.equal(ctx.oocChatText({trigger:'[OOC:'},'Question'),'[OOC: Question]');
 assert.equal(ctx.gearState('wielding'),'in hand');
 assert.equal(ctx.gearState('stored in the room'),'stowed');
 assert.equal(ctx.gearNormalize([{item:'Roxy wand',state:'in hand'},{item:'Estate sword',state:'nearby'}]).length,1);

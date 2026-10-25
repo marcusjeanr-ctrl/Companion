@@ -1,3 +1,12 @@
+## 2.8.4 compatibility candidate — stability fixes
+
+- Anchor yearless Agenda deadlines to the active Mushoku calendar; prevent huge false overdue counts.
+- Show birth year only when present and read additional explicit `Born`/`Birth` HUD fields.
+- Show mana tier lore from the exact tier entry instead of an unrelated ritual.
+- Use a neutral OOC fallback for cards without a named guide, preserving Living World's guide.
+- Replace the stale 2.1 beta panel title with the installed candidate version.
+- Keep the 2.8.1 baseline features and the 2.8.3 Mushoku adapters; live validation remains open.
+
 ## 2.8.3 compatibility candidate — Mushoku integration
 
 - Correct Six-Sided's 30-day calendar and parse mixed comma/arrow geographic paths.

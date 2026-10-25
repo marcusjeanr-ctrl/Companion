@@ -1123,7 +1123,7 @@ export function setup(ctx) {
         id: 'rpg-companion-hms',
         title: 'RPG Companion (HMS)',
         shortName: 'RPG',
-        headerTitle: 'RPG Companion HMS Edition 2.1 beta',
+        headerTitle: 'RPG Companion HMS Edition 2.8.4 compatibility candidate',
         description: 'The side panel for HMS bots: the HUD as cards, people, quests, the map, fights, the Chronicle, and a guide',
         keywords: ['rpg', 'hms', 'tracker', 'hud', 'quests', 'dice', 'guide'],
         iconSvg: ICON_SVG
@@ -4985,7 +4985,7 @@ export function setup(ctx) {
                 w.age !== null ? h('div', { class: 'rpgc-wstat' }, h('b', null, String(w.age)), h('span', null, 'years old')) : null,
                 w.adventurer ? h('div', { class: 'rpgc-wstat' }, h('b', null, `${w.adventurer.rank}-Rank`), h('span', null, w.adventurer.party || (w.adventurer.solo ? 'solo' : 'adventurer'))) : null));
             if (w.saga) out.push(renderMtSaga(w.saga));
-            if (w.race) out.push(wRow('Born', `K. ${w.birth} \u00B7 ${w.race}`, w.origin ? h('span', { class: 'rpgc-chip' + (/outworlder/i.test(w.origin) ? ' hot' : '') }, w.origin) : null));
+            if (w.birth !== null || w.race) out.push(wRow(w.birth !== null ? 'Born' : 'Race', [w.birth !== null ? `K. ${w.birth}` : null, w.race].filter(Boolean).join(' \u00B7 '), w.origin ? h('span', { class: 'rpgc-chip' + (/outworlder/i.test(w.origin) ? ' hot' : '') }, w.origin) : null));
             if (w.mana) out.push(h('div', { class: 'rpgc-wability' }, wRow('Mana capacity', h('b', null, w.mana)), loreNote(w.manaLore)));
             if (w.reserve) out.push(wRow('Mana reserve', w.reserve));
             if (w.casting) out.push(wRow('Casting', w.casting));
@@ -6229,7 +6229,7 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
             if (!popWin || popWin.closed) {
                 popWin = window.open('', 'rpgc_popout', 'width=460,height=860');
                 if (!popWin) { state.status = { kind: 'warning', text: 'The browser blocked the pop-out window. Allow pop-ups for Lumiverse and try again.' }; const s = S(); s.uiPanelMode = 'drawer'; return applyPanelMode(); }
-                popWin.document.title = 'RPG Companion HMS Edition 2.1 beta';
+                popWin.document.title = 'RPG Companion HMS Edition 2.8.4 compatibility candidate';
                 syncPopoutLook(popWin);
                 try { if (!popLookObs) { popLookObs = new MutationObserver(() => syncPopoutLook(popWin)); popLookObs.observe(document.documentElement, { attributes: true }); if (document.body) popLookObs.observe(document.body, { attributes: true, attributeFilter: ['class'] }); } } catch { /* optional */ }
                 popWin.addEventListener('beforeunload', () => { popWin = null; if (panelMode() === 'popout') { const s = S(); s.uiPanelMode = 'drawer'; saveSettings(false); applyPanelMode(); render(); } });
