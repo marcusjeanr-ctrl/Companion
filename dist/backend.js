@@ -2115,7 +2115,7 @@ async function healRecent(chatId, chat) {
 
 /** Keep the per-chat caches bounded: the oldest chats drop out and are simply re-read when opened again. */
 function trimChatCaches(keep) {
-    const maps = [chatStateCache, hmsCache, userNameCache, lorePool, loreActivated, lastInjection, thoughtsCache, statesCache];
+    const maps = [trackerTimings, chatStateCache, hmsCache, userNameCache, lorePool, loreActivated, lastInjection, thoughtsCache, statesCache];
     for (const m of maps) {
         if (!m || typeof m.size !== 'number' || m.size <= 80) continue;
         for (const k of [...m.keys()]) {
@@ -2126,25 +2126,46 @@ function trimChatCaches(keep) {
     }
 }
 
-async function pushState(chatId) {
+let activeReadPass = null;
+function withReadPass(chat, read) {
+    if (activeReadPass && activeReadPass.chat === chat) return read();
+    const previous = activeReadPass;
+    activeReadPass = { chat, values: new Map() };
+    try { return read(); } finally { activeReadPass = previous; }
+}
+function memoRead(chat, key, read) {
+    const pass = activeReadPass;
+    if (!pass || pass.chat !== chat) return read();
+    if (!pass.values.has(key)) pass.values.set(key, read());
+    return pass.values.get(key);
+}
+const trackerTimings = new Map();
+function trackerProgress(chatId, text) {
+    setStatus(chatId, 'busy', text);
+    toFrontend({ type: 'tracker_status', chatId, busy: true, status: chatStatus.get(chatId) });
+}
+
+async function pushState(chatId, snapshot = null) {
     trimChatCaches(chatId);
     if (!chatId) {
         toFrontend({ type: 'state', chatId: null, settings, paletteDefault: DIALOGUE_PALETTE_DEFAULT });
         return;
     }
     try {
-        const chat = await chatApi.getMessages(chatId);
+        const chat = snapshot || await chatApi.getMessages(chatId);
         if (await healRecent(chatId, chat)) chat.splice(0, chat.length, ...(await chatApi.getMessages(chatId)));
         const { data } = await collectCommitted(chatId, chat, null);
         const target = lastAssistant(chat);
         const cs = await getChatState(chatId);
         refreshThoughtsCache(chatId, chat);
-        toFrontend({
+        const userName = await getUserName(chatId);
+        const panelStarted = Date.now();
+        const payload = withReadPass(chat, () => ({
             type: 'state',
             chatId,
             version: RPGC_VERSION,
             paletteDefault: DIALOGUE_PALETTE_DEFAULT,
-            userName: await getUserName(chatId),
+            userName,
             data,
             target: target ? { messageId: target.id, swipeId: target.swipe_id ?? 0 } : null,
             busy: busyChats.has(chatId),
@@ -2203,7 +2224,10 @@ async function pushState(chatId) {
                 return x;
             })(),
             settings
-        });
+        }));
+        const timing = trackerTimings.get(chatId);
+        if (timing) { timing.panelMs = Date.now() - panelStarted; payload.trackerTiming = { ...timing }; }
+        toFrontend(payload);
     } catch (e) {
         logW(`[RPG Companion HMS] pushState failed: ${e?.message || e}`);
         toFrontend({ type: 'state', chatId, settings, busy: busyChats.has(chatId), status: { kind: 'error', text: `Could not read this chat: ${e?.message || e}`, at: Date.now() } });
@@ -2217,7 +2241,7 @@ async function pushState(chatId) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.6-rc.1';
+const RPGC_VERSION = '2.8.7-rc.1';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -3874,13 +3898,24 @@ function atlasLocate(atlas, segments) {
 }
 
 /** The small part every panel state carries: where you are in the book, and the book's version. */
+const atlasObservedPaths = new WeakMap();
+function atlasObserveHistory(atlas, chat) {
+    if (!atlas || !Array.isArray(chat)) return;
+    let seen = atlasObservedPaths.get(atlas);
+    if (!seen) { seen = new Set(); atlasObservedPaths.set(atlas, seen); }
+    for (const m of relReadings(chat).slice(-100)) {
+        const hud = messageHud(m);
+        if (!hud || !hud.location) continue;
+        const key = JSON.stringify(hud.location);
+        if (seen.has(key)) continue;
+        atlasAddMushokuPath(atlas, hud.location);
+        seen.add(key);
+    }
+}
 function atlasHereInfo(chatId, hud, chat = null) {
     const atlas = atlasFor(chatId, hud && hud.location);
     if (!atlas) return null;
-    if (Array.isArray(chat)) for (const m of chat.filter(x => x.role === 'assistant').slice(-100)) {
-        const prior = parseHud(textOf(m.content));
-        if (prior && prior.location) atlasAddMushokuPath(atlas, prior.location);
-    }
+    atlasObserveHistory(atlas, chat);
     const here = hud && hud.location ? atlasLocate(atlas, hud.location) : null;
     const trail = [];
     let n = here ? atlas.nodes.get(here.id) : null;
@@ -4565,8 +4600,8 @@ async function runSeparateUpdate(chatId, targetId = null) {
     activeRuns.set(chatId, runId);
     busyChats.add(chatId);
     const started = Date.now();
-    setStatus(chatId, 'busy', 'Generating trackers with a separate call…');
-    await pushState(chatId);
+    trackerProgress(chatId, 'Preparing panel tracking…');
+    trackerTimings.set(chatId, { startedAt: started, preparationMs: 0, modelMs: 0, applyMs: 0, panelMs: 0 });
     try {
         const chat = await chatApi.getMessages(chatId);
         const target = targetId ? chat.find(m => m.id === targetId) : lastAssistant(chat);
@@ -4574,6 +4609,8 @@ async function runSeparateUpdate(chatId, targetId = null) {
             setStatus(chatId, 'info', 'There is no reply to read trackers from yet.');
             return;
         }
+        const targetSwipe = target.swipe_id ?? 0;
+        const targetText = textOf(target.content);
         const userName = await getUserName(chatId);
         const { data: committed } = await collectCommitted(chatId, chat, target.id);
         const locks = (await getChatState(chatId)).locks;
@@ -4581,13 +4618,12 @@ async function runSeparateUpdate(chatId, targetId = null) {
         if (isHmsChat(chatId, null, chat)) {
             // The companion block is the only thing a separate call fetches in an HMS chat.
             // With it switched off there is nothing to ask for, so no call is made.
-            if (!companionWanted(await getChatState(chatId))) {
+            if (!companionWanted(await getChatState(chatId), chat)) {
                 setStatus(chatId, 'info', 'The side-panel block is switched off, or has nothing to carry, so there is nothing to fetch. The HUD is read from the reply itself.');
                 return;
             }
-            setStatus(chatId, 'busy', 'Reading who is in the scene…');
-            await pushState(chatId);
-            const comp = await hmsCompanionCall(chatId, chat, target, committed, locks);
+            await pushState(chatId, chat);
+            const comp = await hmsCompanionCall(chatId, chat, target, committed, locks, trackerTimings.get(chatId));
             if (cancelledRuns.has(runId) || activeRuns.get(chatId) !== runId) return;
             const secs = Math.round((Date.now() - started) / 1000);
             if (!comp.found) {
@@ -4595,7 +4631,13 @@ async function runSeparateUpdate(chatId, targetId = null) {
                 return;
             }
             const fresh = await chatApi.getMessages(chatId);
-            const msg = fresh.find(m => m.id === target.id) || target;
+            const msg = fresh.find(m => m.id === target.id);
+            if (!msg || (msg.swipe_id ?? 0) !== targetSwipe || textOf(msg.content) !== targetText) {
+                setStatus(chatId, 'info', 'The reply changed while tracking. Refresh to read the active reply.');
+                return;
+            }
+            const applyStarted = Date.now();
+            if (comp.fight) await immAfterReply(chatId, msg, 'separate', { hud: messageHud(msg), fight: comp.fight });
             const existing = getSwipeData(msg) || {};
             const info = { ...(existing.infoBox || {}) };
             if (comp.weather) info.weather = { forecast: comp.weather, emoji: '' };
@@ -4603,14 +4645,23 @@ async function runSeparateUpdate(chatId, targetId = null) {
                 plot: comp.plot || existing.plot || null, objectives: comp.objectives || existing.objectives || null, injuries: comp.injuries || existing.injuries || null,
                 moments: Array.isArray(comp.moments) ? comp.moments : (existing.moments || null),
                 inbox: Array.isArray(comp.inbox) ? comp.inbox : (existing.inbox || null),
+                pos: comp.pos || existing.pos || null,
+                room: comp.room || existing.room || null,
+                posRoom: comp.pos || comp.room ? posRoomKey(messageHud(msg)) : (existing.posRoom || null),
                 ...simStoreKeys(comp, existing, fresh, await getChatState(chatId), msg.id) });
+            await keepRoomReading(chatId, comp, messageHud(msg));
             await readingsAfterReply(chatId, fresh, msg, comp.injuries || null, comp.hitogami || null);
             try {
                 const sp = comp.you && comp.you.spells;
                 if (sp && sp.length && magicCfg().on) { const st2 = await getChatState(chatId); if (spellbookAdd(st2, sp.map(n => ({ name: n })), 'story')) await saveChatState(chatId, st2); }
             } catch { /* the spellbook is a convenience */ }
-            if (comp.cutOff) setStatus(chatId, 'warning', `Characters updated by a separate call (${secs}s). The answer was cut off by the response length limit, so only its first part was read. Raise the maximum response length (max tokens) of the connection the tracker uses, or switch off modules you do not need in Settings → HMS systems.`);
-            else setStatus(chatId, 'ok', `Characters updated by a separate call (${secs}s).`);
+            const timing = trackerTimings.get(chatId);
+            timing.applyMs = Date.now() - applyStarted;
+            timing.totalMs = Date.now() - started;
+            const detail = `prep ${(timing.preparationMs / 1000).toFixed(1)}s · model ${(timing.modelMs / 1000).toFixed(1)}s · save ${(timing.applyMs / 1000).toFixed(1)}s`;
+            spindle.log.info(`[RPG Companion HMS] Panel tracking: ${detail}`);
+            if (comp.cutOff) setStatus(chatId, 'warning', `Panels updated (${Math.round(timing.totalMs / 1000)}s; ${detail}). The answer was cut off by the response length limit, so only its first part was read. Raise the maximum response length (max tokens) of the connection the tracker uses, or switch off modules you do not need in Settings → HMS systems.`);
+            else setStatus(chatId, 'ok', `Panels updated (${Math.round(timing.totalMs / 1000)}s; ${detail}).`);
             return;
         }
 
@@ -9441,7 +9492,12 @@ function companionWanted(st, chat = null) {
     if (!settings.hmsCompanion) return false;
     if (chat && posWanted(chat, st)) return true;
     const sv = hmsCfg().survival;
-    return isPresentCharactersEnabled() || partyActive(st) || !!(sv.enabled && sv.askCompanion) || relCfg().on || commsCfg().on || simWanted();
+    const plot = plotCfg();
+    const modules = [famCfg(), gearCfg(), agendaCfg(), holdCfg(), moneyCfg(), factionCfg(), secretCfg()];
+    return isPresentCharactersEnabled() || partyActive(st) || !!(sv.enabled && sv.askCompanion) ||
+        relCfg().on || commsCfg().on || simWanted() || youCfg().on || magicCfg().on ||
+        plot.plot || plot.objectives || questsDetailOn() || modules.some(c => c.on && c.ask) ||
+        !!(chronCfg().enabled && chronCfg().moments) || !!(chat && injActive(chat));
 }
 
 /** The extra keys a classic tracker JSON carries for the party, relationships and contacts. */
@@ -9476,6 +9532,9 @@ function plotNormalize(p) {
     return now || threads.length || canonEvents.length ? { now, threads, canonEvents } : null;
 }
 function mtEventLedger(chat) {
+    return memoRead(chat, 'canonEvents', () => mtEventLedgerUncached(chat));
+}
+function mtEventLedgerUncached(chat) {
     const events = new Map();
     for (const m of chat || []) {
         if (m.role !== 'assistant') continue;
@@ -9595,6 +9654,9 @@ function leanPanelForPrompt(chars) {
 }
 
 function buildCompanionInstruction(committed, userName, locks, st = null, chat = null, separate = false, opts = {}) {
+    return withReadPass(chat, () => buildCompanionInstructionRead(committed, userName, locks, st, chat, separate, opts));
+}
+function buildCompanionInstructionRead(committed, userName, locks, st = null, chat = null, separate = false, opts = {}) {
     // separate: its own call after the reply · 'slot': inside a preset that already sets the reply's shape · else: added to the chat prompt
     const mode = separate === 'slot' ? 'slot' : separate ? 'separate' : 'inline';
     const wantWeather = !!settings.enableDynamicWeather;
@@ -9869,6 +9931,23 @@ async function hmsHandleReply(chatId, chat, msg, generationType) {
     return out;
 }
 
+async function keepRoomReading(chatId, comp, hud) {
+    if (!comp.room && comp.pos) {
+        // positions in a room the bank supplied: this chat takes its own copy, so the map can draw it
+        const h = hud, key = posRoomKey(h), banked = mapBankGet(h);
+        if (key && banked) { try { const rst = await getChatState(chatId); if (!isPlainObject(rst.rooms)) rst.rooms = {}; if (!rst.rooms[key]) { rst.rooms[key] = { ...banked, path: h && h.location ? h.location.slice(0, 12) : undefined, at: Date.now() }; await saveChatState(chatId, rst); } } catch (e) { logW(`[RPG Companion HMS] Could not take the room from the map bank: ${e?.message || e}`); } }
+    }
+    if (comp.room) {
+        // into the map bank the first time this place is drawn in this world
+        try { await mapBankLoad(); if (chatId !== SANDBOX_ID) mapBankPut(hud, comp.room, chatId); } catch { /* the bank is a convenience */ }
+        // the room as the story drew it, kept for this place: later replies only move people in it
+        const key = posRoomKey(hud);
+        if (key) { try { const rst = await getChatState(chatId); if (!isPlainObject(rst.rooms)) rst.rooms = {}; const hp = (hud || {}).location; rst.rooms[key] = { ...comp.room, path: Array.isArray(hp) ? hp.slice(0, 12) : undefined, at: Date.now() };
+            const keys = Object.keys(rst.rooms); if (keys.length > 80) for (const k of keys.sort((a, b) => (rst.rooms[a].at || 0) - (rst.rooms[b].at || 0)).slice(0, keys.length - 80)) delete rst.rooms[k];
+            await saveChatState(chatId, rst); } catch (e) { logW(`[RPG Companion HMS] Could not keep the room: ${e?.message || e}`); } }
+    }
+}
+
 async function hmsHandleReplyInner(chatId, chat, msg, generationType) {
     let content = textOf(msg.content);
     const rec = recoverFromReasoning(msg, content);
@@ -9935,20 +10014,7 @@ async function hmsHandleReplyInner(chatId, chat, msg, generationType) {
         posRoom: res.comp.pos || res.comp.room ? posRoomKey(res.hud || prevHud) : (prev.posRoom || null),
         ...simStoreKeys(res.comp, prev, chat, await getChatState(chatId), msg.id)
     }, patch);
-    if (!res.comp.room && res.comp.pos) {
-        // positions in a room the bank supplied: this chat takes its own copy, so the map can draw it
-        const h = res.hud || prevHud, key = posRoomKey(h), banked = mapBankGet(h);
-        if (key && banked) { try { const rst = await getChatState(chatId); if (!isPlainObject(rst.rooms)) rst.rooms = {}; if (!rst.rooms[key]) { rst.rooms[key] = { ...banked, path: h && h.location ? h.location.slice(0, 12) : undefined, at: Date.now() }; await saveChatState(chatId, rst); } } catch (e) { logW(`[RPG Companion HMS] Could not take the room from the map bank: ${e?.message || e}`); } }
-    }
-    if (res.comp.room) {
-        // into the map bank the first time this place is drawn in this world
-        try { await mapBankLoad(); if (chatId !== SANDBOX_ID) mapBankPut(res.hud || prevHud, res.comp.room, chatId); } catch { /* the bank is a convenience */ }
-        // the room as the story drew it, kept for this place: later replies only move people in it
-        const key = posRoomKey(res.hud || prevHud);
-        if (key) { try { const rst = await getChatState(chatId); if (!isPlainObject(rst.rooms)) rst.rooms = {}; const hp = (res.hud || prevHud || {}).location; rst.rooms[key] = { ...res.comp.room, path: Array.isArray(hp) ? hp.slice(0, 12) : undefined, at: Date.now() };
-            const keys = Object.keys(rst.rooms); if (keys.length > 80) for (const k of keys.sort((a, b) => (rst.rooms[a].at || 0) - (rst.rooms[b].at || 0)).slice(0, keys.length - 80)) delete rst.rooms[k];
-            await saveChatState(chatId, rst); } catch (e) { logW(`[RPG Companion HMS] Could not keep the room: ${e?.message || e}`); } }
-    }
+    await keepRoomReading(chatId, res.comp, res.hud || prevHud);
     if (settings.enableSpotifyMusic) {
         const song = extractSong(content);
         if (song) { const cs = await getChatState(chatId); cs.song = song; await saveChatState(chatId, cs); }
@@ -9991,6 +10057,9 @@ async function hmsHandleReplyInner(chatId, chat, msg, generationType) {
 
 /** Panel payload for the latest HUD. Always read from message content, so user edits count. */
 function hmsPanelState(chatId, chat, st) {
+    return withReadPass(chat, () => hmsPanelStateRead(chatId, chat, st));
+}
+function hmsPanelStateRead(chatId, chat, st) {
     const msg = latestHudMessage(chat);
     const hud = msg ? parseHud(textOf(msg.content)) : null;
     const g = msg ? (getSwipeData(msg)?.hudGuard || null) : null;
@@ -10090,7 +10159,8 @@ const HMS_TRACK_NAMES = {
 const HMS_MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 
 function hmsCfg() {
-    return mergeDeep(HMS_SYS_DEFAULTS, (settings && settings.hmsSystems) || {});
+    return memoRead(activeReadPass && activeReadPass.chat, 'hmsConfig', () =>
+        mergeDeep(HMS_SYS_DEFAULTS, (settings && settings.hmsSystems) || {}));
 }
 
 // ── small parsing helpers ──
@@ -10705,23 +10775,25 @@ function hmsReadSystems(hud, cfg) {
 
 const hmsParseCache = new Map();
 
+function messageHud(m) {
+    const text = textOf(m.content);
+    const key = `${m.id}:${m.swipe_id ?? 0}`;
+    const hit = hmsParseCache.get(key);
+    if (hit && hit.text === text) return hit.hud;
+    const hud = parseHud(text) || null;
+    hmsParseCache.set(key, { text, hud });
+    if (hmsParseCache.size > 3000) hmsParseCache.delete(hmsParseCache.keys().next().value);
+    return hud;
+}
 function hmsTimeline(chat, limit = 300) {
+    return memoRead(chat, `timeline:${limit}`, () => hmsTimelineUncached(chat, limit));
+}
+function hmsTimelineUncached(chat, limit = 300) {
     const out = [];
     for (let i = chat.length - 1; i >= 0 && out.length < limit; i--) {
         const m = chat[i];
         if (m.role !== 'assistant') continue;
-        const text = textOf(m.content);
-        // One entry per message and swipe. A hit needs the very same text (a native compare, far cheaper
-        // than hashing), so an in-place edit of the same length is re-read, never served stale.
-        const ck = `${m.id}:${m.swipe_id ?? 0}`;
-        const hit = hmsParseCache.get(ck);
-        let hud;
-        if (hit && hit.text === text) hud = hit.hud;
-        else {
-            hud = parseHud(text) || null;
-            hmsParseCache.set(ck, { text, hud });
-            if (hmsParseCache.size > 3000) hmsParseCache.delete(hmsParseCache.keys().next().value);
-        }
+        const hud = messageHud(m);
         if (hud) out.push({ msg: m, hud });
     }
     out.reverse();
@@ -11378,6 +11450,9 @@ function relRank(label, rc) {
 }
 
 function relReadings(chat) {
+    return memoRead(chat, 'readings', () => relReadingsUncached(chat)).slice();
+}
+function relReadingsUncached(chat) {
     const list = [];
     for (let i = chat.length - 1, n = 0; i >= 0 && n < 300; i--) {
         if (chat[i].role !== 'assistant') continue;
@@ -13202,16 +13277,8 @@ function simChekhovNormalize(o, whole = false) {
 // deleted message is always reflected and nothing drifts. Fading is computed lazily from turn counts,
 // so a long chat costs only as much as what was reported in it.
 
-function simHudOf(m) {
-    const text = textOf(m.content);
-    const ck = `${m.id}:${m.swipe_id ?? 0}`;
-    const hit = hmsParseCache.get(ck);
-    if (hit && hit.text === text) return hit.hud;
-    const hud = parseHud(text) || null;
-    hmsParseCache.set(ck, { text, hud });
-    if (hmsParseCache.size > 3000) hmsParseCache.delete(hmsParseCache.keys().next().value);
-    return hud;
-}
+function simHudOf(m) { return messageHud(m); }
+
 const simHasData = (d) => !!(d && (Array.isArray(d.minds) || Array.isArray(d.agendas) || Array.isArray(d.learned) || isPlainObject(d.chekhov)));
 
 /**
@@ -14455,6 +14522,9 @@ function spellStanding(lines) {
 
 /** What the story reports: spells learned, and how far each study has come. A swiped-away reply takes its part with it. */
 function spellStoryFold(chat) {
+    return memoRead(chat, 'spells', () => spellStoryFoldUncached(chat));
+}
+function spellStoryFoldUncached(chat) {
     const learned = new Map(), mastered = new Map(), progress = new Map(), order = new Map();
     let i = 0;
     for (const m of chat || []) {
@@ -14593,7 +14663,7 @@ function spellStudyReminder(chatId, chat, st, userName) {
     const fold = spellStoryFold(chat);
     const study = spellStudyActive(chat, st, fold);
     if (!study.length) return null;
-    const known = spellKnown(chat, st);
+    const known = spellKnown(chat, st, fold);
     const kk = [...known.keys()];
     const cat = spellCatalog(chatId);
     const rows = [];
@@ -14726,6 +14796,7 @@ async function hmsDiagnostics(chatId, includeReply) {
             hudKeys: hud ? hud.lines.map(l => l.key).slice(0, 40) : [], lastReplyHasRawBlock: !!(hudMsg && /<rpg_companion>/i.test(textOf(hudMsg.content))),
             lastReplyReasoningHasHud: !!(hudMsg && hudMsg.extra && typeof hudMsg.extra.reasoning === 'string' && HUD_HEAD_RE.test(hudMsg.extra.reasoning)) },
         lastInjection: lastInjection.get(chatId) || null,
+        trackerTiming: trackerTimings.get(chatId) || null,
         features: await (async () => {
             if (!chatId) return null;
             try {
@@ -14836,7 +14907,7 @@ function pinsReminder(st) {
 // ═════════════════════════════ END HMS EDITION ═════════════════════════════
 
 // Separate mode for HMS chats: only the companion block comes from an extra call.
-async function hmsCompanionCall(chatId, chat, target, committed, locks) {
+async function hmsCompanionCall(chatId, chat, target, committed, locks, timing = null) {
     const userName = await getUserName(chatId);
     const depth = Math.max(1, Number(settings.updateDepth) || 4);
     const targetIdx = chat.findIndex(m => m.id === target.id);
@@ -14844,20 +14915,29 @@ async function hmsCompanionCall(chatId, chat, target, committed, locks) {
     // Who is present, what they are and how they relate all live in their lorebook entries.
     const compHud = isHmsChat(chatId, null, chat) ? parseHud(textOf(latestHudMessage(chat)?.content)) : null;
     const compScene = compHud ? (compHud.lines || []).map(l => l.text).join('\n') : '';
+    const loreStarted = Date.now();
     const compLore = loreCfg().inTracker ? await buildLoreBlock(chatId, { chat, sceneText: compScene, where: 'companion block' }) : '';
+    if (timing) timing.loreMs = Date.now() - loreStarted;
+    const memoryStarted = Date.now();
     const compMem = memCfg().inTracker ? await buildMemoryBlock(chatId, { queryText: compScene, where: 'companion block' }) : '';
+    if (timing) timing.memoryMs = Date.now() - memoryStarted;
     const msgs = [{ role: 'system', content: 'You read a roleplay and report who is present in the latest scene, for the player\'s side panel. You reply with the requested data block only.\n\n' + compLore + compMem }];
     for (const m of history) msgs.push({ role: m.role === 'user' ? 'user' : 'assistant', content: stripCompanion(textOf(m.content)) });
     const cst = await getChatState(chatId);
+    const instructionStarted = Date.now();
     const instr = buildCompanionInstruction(committed, userName, locks, immStView(cst, target.id), chat, true, { excludeId: target.id });
-    msgs.push({ role: 'user', content: instr + '\n\nRespond with ONLY the <rpg_companion> block, nothing else.' });
+    if (timing) timing.instructionMs = Date.now() - instructionStarted;
+    msgs.push({ role: 'user', content: instr + '\n\nRespond with ONLY the <rpg_companion> block, nothing else. Use compact JSON without indentation. Keep notes short. For event/change arrays, report only events in the latest turn; use [] when none occurred. Do not repeat earlier changes. Still include every requested panel key and its required current-scene snapshot.' });
     const request = { messages: msgs, ...userOpt() };
     if (!settings.trackerThinking) request.reasoning = { source: 'off' };
     const timeoutMs = Math.max(20, Number(settings.trackerTimeoutSec) || 180) * 1000;
-    const res = await quietCall(request, timeoutMs, typeof chatId !== 'undefined' ? chatId : null);
+    const modelStarted = Date.now();
+    if (timing) timing.preparationMs = modelStarted - timing.startedAt;
+    trackerProgress(chatId, 'Reading RP panels…');
+    const res = await quietCall(request, timeoutMs, chatId);
+    if (timing) timing.modelMs = Date.now() - modelStarted;
     const comp = parseCompanion(res?.content || '', partyRoster(cst), cst, immActive(cst) ? cst.immersive : null);
     comp.cutOff = /<rpg_companion>/i.test(res?.content || '') && !/<\/rpg_companion>/i.test(res?.content || '');
-    if (comp.fight) await immAfterReply(chatId, target, 'separate', { hud: parseHud(textOf(target.content)), fight: comp.fight });
     if (comp.found && comp.characters) enforceLocks(comp, committed, locks);
     return comp;
 }
@@ -15652,10 +15732,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
                     await loreBuildPoolFromApi(payload.chatId);
                     atlas = atlasFor(payload.chatId, hud && hud.location);
                 }
-                if (atlas) for (const prior of chat.filter(x => x.role === 'assistant').slice(-100)) {
-                    const h = parseHud(textOf(prior.content));
-                    if (h && h.location) atlasAddMushokuPath(atlas, h.location);
-                }
+                atlasObserveHistory(atlas, chat);
                 if (!atlas) { toFrontend({ type: 'atlas', chatId: payload.chatId, atlas: null }); break; }
                 const ap = atlasPayload(atlas, hud && hud.location ? atlasLocate(atlas, hud.location) : null);
                 // the places the map bank has a drawing of

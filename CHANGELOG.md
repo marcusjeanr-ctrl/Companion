@@ -1,3 +1,13 @@
+## 2.8.7 compatibility candidate — faster panel reads and complete separate-mode maps
+
+- Share timeline, settings, spell history and canon-event reads within one synchronous panel/request pass. Reuse the exact-text HUD cache for Atlas and Minds; skip repeated insertion of observed Atlas paths. Edits and active swipes are reread on the next pass.
+- Replace redundant pre-call panel rebuilds with lightweight progress. Send the current local panels before the tracker request, then publish the completed readings afterward. Keep every enabled tracking schema and the configured history depth.
+- Save separate-mode positions, room metadata, room-bank copies and building history through the same helper as inline mode. Enabled data modules can activate tracking independently of NPC panels.
+- Report preparation, provider request, saving and local payload-building times; diagnostics also separate lore, memory and instruction preparation. Request compact tracker JSON and turn-local changes.
+- Discard a late HMS tracker report when its target was edited, swiped or deleted; move fight readback after that validation.
+- Preserve every emitted panel output in the four original 2.8.1 demo worlds, verified by a committed baseline fixture; only the intended Mushoku absolute-clock correction differs.
+- Add full-backend integration tests and a reproducible local benchmark. With 300 assistant readings plus 300 user turns and the supplied Six-Sided lorebook, warm panel medians were 57.03 ms (2.8.1), 66.22 ms (2.8.6), and 43.92 ms (2.8.7). This measures local backend reading, not provider response time or phone rendering.
+
 ## 2.8.6 compatibility candidate — automatic spell study
 
 - Detect named spell practice in either Mushoku chat without requiring the Study button.

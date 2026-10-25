@@ -1124,7 +1124,7 @@ export function setup(ctx) {
         id: 'rpg-companion-hms',
         title: 'RPG Companion (HMS)',
         shortName: 'RPG',
-        headerTitle: 'RPG Companion HMS Edition 2.8.6 compatibility candidate',
+        headerTitle: 'RPG Companion HMS Edition 2.8.7 compatibility candidate',
         description: 'The side panel for HMS bots: the HUD as cards, people, quests, the map, fights, the Chronicle, and a guide',
         keywords: ['rpg', 'hms', 'tracker', 'hud', 'quests', 'dice', 'guide'],
         iconSvg: ICON_SVG
@@ -1205,6 +1205,15 @@ export function setup(ctx) {
 
     const unsubBackend = ctx.onBackendMessage((msg) => {
         if (!msg) return;
+        if (msg.type === 'tracker_status') {
+            if (msg.chatId !== state.chatId) return;
+            const wasBusy = state.busy;
+            state.busy = !!msg.busy;
+            if (state.busy && !wasBusy) state.busySince = Date.now();
+            state.status = msg.status || null;
+            render();
+            return;
+        }
         if (msg.type === 'diagnostics') { onDiagnostics(msg); return; }
         if (msg.type === 'catalog') {
             if (msg.chatId === state.chatId) { state.catalog = msg.catalog ? { ...msg.catalog, chatId: msg.chatId } : { none: true, chatId: msg.chatId, pages: [] }; state.catReq = false; render(); }
@@ -6230,7 +6239,7 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
             if (!popWin || popWin.closed) {
                 popWin = window.open('', 'rpgc_popout', 'width=460,height=860');
                 if (!popWin) { state.status = { kind: 'warning', text: 'The browser blocked the pop-out window. Allow pop-ups for Lumiverse and try again.' }; const s = S(); s.uiPanelMode = 'drawer'; return applyPanelMode(); }
-                popWin.document.title = 'RPG Companion HMS Edition 2.8.6 compatibility candidate';
+                popWin.document.title = 'RPG Companion HMS Edition 2.8.7 compatibility candidate';
                 syncPopoutLook(popWin);
                 try { if (!popLookObs) { popLookObs = new MutationObserver(() => syncPopoutLook(popWin)); popLookObs.observe(document.documentElement, { attributes: true }); if (document.body) popLookObs.observe(document.body, { attributes: true, attributeFilter: ['class'] }); } } catch { /* optional */ }
                 popWin.addEventListener('beforeunload', () => { popWin = null; if (panelMode() === 'popout') { const s = S(); s.uiPanelMode = 'drawer'; saveSettings(false); applyPanelMode(); render(); } });
