@@ -100,4 +100,5 @@ async function main() {
     console.log('Startup/render regression passed: backend boot, frontend setup, both populated Mushoku HUDs, all 22 Saga arcs, incomplete payload recovery and cleanup.');
 }
 
-main().catch(error => { console.error(error); process.exitCode = 1; });
+if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
+module.exports = { frontend };

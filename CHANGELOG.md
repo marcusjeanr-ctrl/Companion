@@ -1,3 +1,11 @@
+## 2.8.16 — general known-spell reconciliation and active Agenda items
+
+- Read explicit player-owned Known Spells lists from active assistant replies as established knowledge, even when a separate tracker omitted them. Support named-player and second-person Markdown headings, bullets and tier lists. Exclude other actors' lists, general catalogs, rank-only descriptions, negative/untrained sections, quotations and code examples.
+- Derive established knowledge from active message text rather than a permanent grant. Keep aliases, manual Forget, later real learning, edited replies and swipes consistent. Cache exact-text reads locally. Do not infer mastery, rank increases, or missing lorebook ranks from the list.
+- Add an in_progress Agenda state, request it for activities that actually start, and render active items in their own section with completion controls. Reconcile old open entries against matching current-activity reports while excluding future/conditional cues and matches based only on shared participants/location. A passed time never starts an activity; completion still requires a reported outcome.
+- Anchor now/right now/immediately to the source reply's HUD clock. Preserve manual Agenda edits and per-swipe reconstruction.
+- Replay the supplied export: 20 already-known spells recovered and the ongoing bout shows In progress. Add anonymized general-format/lifecycle/render regressions; all nine suites pass. Keep the existing tracker transport and add no model calls.
+
 ## 2.8.15 — canonical spell aliases and individual port references
 
 - Resolve unambiguous alternate names from dedicated spell entries to canonical catalog names for Known, Mastered, Studying, progress, forget/relearn, study reminders and manual controls. Keep ambiguous/category/variation keywords unresolved and preserve distinct longer spell names.

@@ -1,4 +1,4 @@
-# Mushoku compatibility in HMS 2.8.15 candidate
+# Mushoku compatibility in HMS 2.8.16 candidate
 
 Install the extension ZIP in Lumiverse. The original cards remain readable. A separate Six_Sided_World_HMS_Compatible.json copy resolves conflicting generic-HUD and output-order instructions in the supplied Six-Sided card; its lorebook is unchanged. Living World, the start handler and Reporter preset are unchanged. HMS reads the active chat's WORLD STATE HUD and the attached lorebook; it does not have an independent authoritative world state.
 
@@ -69,3 +69,9 @@ The supplied card mixes intact locations with post-Calamity variants. Atlas now 
 Dedicated spell-entry keywords can supply alternate names when they uniquely identify one spell. General school/magic/variation keywords and ambiguous aliases do not grant catalog spells; canonical names remain authoritative. Existing saved alias names are resolved for display and controls without rewriting message reports. Explicit formatting duplicates are merged, giving 111 catalog names from the supplied book's 81 dedicated spell entries plus other definitions/indexes. Run `node tools/test_spell_aliases.cjs` for study, progress, mastery, manual controls, forgetting, relearning, swipe reversal and world isolation.
 
 Atlas splits the supplied grouped port entries into East Port, West Port and Zant Port, using their explicitly stated continents. Heaven Continent Skyport is read as an access point. None of these references establish player visits or knowledge. The prior Calamity filters remain in effect.
+
+## 2.8.16 general reconciliation
+
+Explicit player-owned Known Spells lists in active assistant replies establish existing spell knowledge independently of the tracker delta. The local reader recognizes supported English Markdown headings and list/tier formats; it does not interpret arbitrary prose as a spell grant. General catalogs, other actors, negative/untrained sections and quoted/code examples are excluded. The list supplies names only: it cannot assign mastery or override catalog ranks. Existing manual Forget suppresses repeated lists until an actual later learning report restores the spell. Edits and swipes invalidate exact-text cached reads.
+
+Agenda supports in_progress for ongoing activities and distinguishes that state from due-soon, overdue and completed outcomes. It can reconcile legacy open entries against matching explicit activity cues in current plot/NPC-activity reports. Shared participants/location alone, future/conditional plans and clock passage do not establish a start. Manual overrides and reported completion remain authoritative. Run `node tools/test_general_tracking.cjs` alongside the eight existing suites. These changes apply across supported chats rather than to one character/export.

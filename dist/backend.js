@@ -2297,7 +2297,7 @@ async function pushState(chatId, snapshot = null) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.15-rc.1';
+const RPGC_VERSION = '2.8.16-rc.1';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -12361,7 +12361,7 @@ async function hmsGearEdit(chatId, p) {
 // Times are placed on the HUD clock, so the panel knows what is due, and the model is reminded.
 
 const AGENDA_KINDS = ['meeting', 'promise', 'deadline', 'event', 'errand'];
-const AGENDA_STATES = ['open', 'kept', 'missed', 'cancelled'];
+const AGENDA_STATES = ['open', 'in_progress', 'kept', 'missed', 'cancelled'];
 const AGENDA_DAYPART = { dawn: 6 * 60, sunrise: 6 * 60, morning: 8 * 60, noon: 12 * 60, midday: 12 * 60, lunch: 12 * 60, afternoon: 15 * 60, evening: 18 * 60, sunset: 18 * 60, dusk: 19 * 60, dinner: 19 * 60, tonight: 21 * 60, night: 21 * 60, midnight: 24 * 60 };
 const AGENDA_NUM = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, couple: 2, few: 3 };
 
@@ -12376,6 +12376,7 @@ function agendaWhen(due, when, at, hud = null) {
     if (at === null || at === undefined) return null;
     const t = String(when || due || '').toLowerCase();
     if (!t) return null;
+    if (/^\s*(?:right now|now|immediately)\s*$/.test(t)) return at;
     const dayStart = Math.floor(at / 1440) * 1440;
     let part = null;
     for (const [k, v] of Object.entries(AGENDA_DAYPART)) if (new RegExp(`\\b${k}\\b`).test(t)) { part = v; break; }
@@ -12405,7 +12406,9 @@ function agendaNormalize(list) {
         if (!what) continue;
         const key = lockKey(what);
         if (!key || out.some(x => x.key === key)) continue;
-        const kind = String(e.kind || '').toLowerCase(), state = String(e.state || '').toLowerCase();
+        const kind = String(e.kind || '').toLowerCase();
+        const rawState = String(e.state || '').toLowerCase().replace(/[ -]+/g, '_');
+        const state = ['started', 'active', 'underway'].includes(rawState) ? 'in_progress' : rawState;
         out.push({ key, what, with: partyText(e.with ?? e.who, 60), where: partyText(e.where, 80), when: partyText(e.when, 60), due: partyText(e.due, 40),
             kind: AGENDA_KINDS.includes(kind) ? kind : 'meeting', state: AGENDA_STATES.includes(state) ? state : state === 'moved' ? 'open' : 'open' });
     }
@@ -12420,6 +12423,23 @@ function agendaSame(a, b) {
     if (!A.size || !B.size) return false;
     let n = 0; for (const t of A) if (B.has(t)) n++;
     return n >= Math.min(A.size, B.size) && n >= 1 && (a.includes(b) || b.includes(a) || n >= 2);
+}
+
+function agendaActivityState(item, data) {
+    const stop = new Set(['the', 'and', 'with', 'for', 'from', 'against', 'this', 'that', 'your', 'you', 'will', 'allowed', 'called', 'breaks', 'begin', 'begins', 'started', 'starting']);
+    const words = text => new Set(lockKey(text || '').split(/[^\p{L}\p{N}]+/u).filter(word => word.length > 2 && !stop.has(word)));
+    const title = words(item.what);
+    const context = words(`${item.with || ''} ${item.where || ''}`);
+    const cues = [data?.plot?.now, ...(Array.isArray(data?.agendas) ? data.agendas.map(row => `${row.name || ''} ${row.doing || ''}`) : [])].filter(Boolean);
+    for (const cue of cues) {
+        const match = words(cue);
+        const overlap = [...title].filter(word => match.has(word));
+        if (overlap.length < 2 || !overlap.some(word => !context.has(word))) continue;
+        if (/\b(?:will|would|might|plans? to|about to|yet to|waiting|not yet|has not|hasn't|before|when|if)\b/i.test(cue)) continue;
+        if (/\b(?:finished|completed|concluded|ended|ends)\b/i.test(cue)) continue;
+        if (/\b(?:begins?|began|started|underway|in progress|fighting|attending|practicing|practising|studying|working)\b/i.test(cue)) return 'in_progress';
+    }
+    return null;
 }
 
 function agendaRead(chat, st) {
@@ -12446,6 +12466,10 @@ function agendaRead(chat, st) {
             if (r.kind) it.kind = r.kind;
             if (r.state !== it.state) it.history.push({ from: it.state, to: r.state, at });
             it.state = r.state; it.idx = idx; it.changedIn = m.id;
+        }
+        for (const it of items) if (it.state === 'open' || it.state === 'in_progress') {
+            const state = agendaActivityState(it, d);
+            if (state && state !== it.state) { it.history.push({ from: it.state, to: state, at }); it.state = state; it.idx = idx; it.changedIn = m.id; }
         }
     }
     for (const a of Array.isArray(g.added) ? g.added : []) {
@@ -12475,7 +12499,7 @@ function hmsAgendaPanel(chat, st, cfg) {
         const status = it.state !== 'open' ? it.state : dueIn === null ? 'unset' : dueIn < -60 ? 'overdue' : dueIn <= 180 ? 'soon' : 'upcoming';
         return { key: it.key, what: it.what, with: it.with, where: it.where, when: it.when, dueIn, kind: it.kind, state: it.state, status, from: it.from, mine: !!it.mine, isNew: it.changedIn === lastId && !!lastId };
     });
-    const rank = { overdue: 0, soon: 1, upcoming: 2, unset: 3, kept: 4, missed: 5, cancelled: 6 };
+    const rank = { in_progress: -1, overdue: 0, soon: 1, upcoming: 2, unset: 3, kept: 4, missed: 5, cancelled: 6 };
     out.sort((a, b) => (rank[a.status] - rank[b.status]) || ((a.dueIn ?? 1e12) - (b.dueIn ?? 1e12)));
     return { items: out.slice(0, 60), ask: ac.ask, tell: ac.tell, clock: now !== null };
 }
@@ -12484,11 +12508,11 @@ function agendaRequest(chat, st, userName, cfg) {
     const ac = agendaCfg(cfg);
     if (!ac.on || !ac.ask) return null;
     const json = `"agenda": [{"what": "what was agreed or set, a few words", "with": "who, or null", "where": "where, or null", "when": "when, as the story says it", "due": "that moment in the HUD's own date and time format, or null", "kind": "${AGENDA_KINDS.join('|')}", "state": "${AGENDA_STATES.join('|')}"}]`;
-    let rules = `"agenda": appointments, promises and set times involving ${userName} — made, kept, broken, moved or called off in ${userName}'s own last message or in this reply ("I'll meet you at the river tomorrow", "the exam is on Friday", "be back before dark"). One entry for each that changed, reusing the same "what" for one already listed; [] when nothing changed. "kept" when it happened, "missed" when its time passed without it, "cancelled" when called off. Report only — the story decides what the world does about it.`;
+    let rules = `"agenda": appointments, promises and set times involving ${userName} — made, started, kept, broken, moved or called off in ${userName}'s own last message or in this reply ("I'll meet you at the river tomorrow", "the exam is on Friday", "be back before dark"). One entry for each that changed, reusing the same "what" for one already listed; [] when nothing changed. "in_progress" once an ongoing activity actually starts; "kept" once it finishes or a one-off appointment is fulfilled, "missed" when its time passed without it, "cancelled" when called off. Report only — the story decides what the world does about it.`;
     if (ac.tell && chat && st) {
         let open = [];
-        try { open = hmsAgendaPanel(chat, st).items.filter(x => x.state === 'open'); } catch { open = []; }
-        if (open.length) rules += `\nAgenda now — ${open.slice(0, 8).map(x => `${x.what}${x.with ? ` (with ${x.with})` : ''}${x.where ? ` at ${x.where}` : ''}: ${x.dueIn === null ? (x.when || 'no set time') : x.dueIn < -60 ? `${hmsSpan(-x.dueIn)} overdue` : x.dueIn <= 0 ? 'due now' : `due in ${hmsSpan(x.dueIn)}`}`).join('; ')}.`;
+        try { open = hmsAgendaPanel(chat, st).items.filter(x => x.state === 'open' || x.state === 'in_progress'); } catch { open = []; }
+        if (open.length) rules += `\nAgenda now — ${open.slice(0, 8).map(x => `${x.what}${x.with ? ` (with ${x.with})` : ''}${x.where ? ` at ${x.where}` : ''}: ${x.state === 'in_progress' ? 'in progress' : x.dueIn === null ? (x.when || 'no set time') : x.dueIn < -60 ? `${hmsSpan(-x.dueIn)} overdue` : x.dueIn <= 0 ? 'due now' : `due in ${hmsSpan(x.dueIn)}`}`).join('; ')}.`;
     }
     return { json, rules };
 }
@@ -14515,7 +14539,7 @@ function hmsMagicPanel(chat, st, cfg, sys, chatId = null) {
     const arts = sys.abilities.filter(g => /magic|tradition|spell/i.test(g.category));
     const cooldowns = (sys._lines || []).filter(l => /cooldown|recharg/i.test(l.text)).map(l => l.text.trim()).slice(0, 4);
     const resolve = spellResolver(chatId);
-    const saved = new Map(spellResolveState(chatId, st, spellStoryFold(chat)).st.spellbook.map(x => { const target = resolve(x.name); return [target.key, { ...x, name: target.name }]; }));
+    const saved = new Map(spellResolveState(chatId, st, spellStoryFold(chat, chatId)).st.spellbook.map(x => { const target = resolve(x.name); return [target.key, { ...x, name: target.name }]; }));
     const book = [...spellKnown(chat, st, null, chatId)].map(([key, value]) => saved.get(key) || { name: value.name, from: value.from }).slice(-60);
     if (!pools.length && !meters.length && !arts.length && !cooldowns.length && !book.length && !list && !ranked) return null;
     return { pools, meters, arts, cooldowns, spellbook: book, list };
@@ -14737,8 +14761,63 @@ function spellStanding(lines) {
 }
 
 /** What the story reports: spells learned, and how far each study has come. A swiped-away reply takes its part with it. */
-function spellStoryFold(chat) {
-    return memoRead(chat, 'spells', () => spellStoryFoldUncached(chat));
+function spellEstablishedList(content, playerName) {
+    const out = [], seen = new Set();
+    const identity = spellKey(playerName);
+    const clean = value => String(value).replace(/[*_`]/g, '').replace(/^\s*#{1,6}\s*/, '').trim();
+    let active = false, fenced = false;
+    for (const raw of String(content || '').split('\n')) {
+        if (/^\s*(?:```|~~~)/.test(raw)) { fenced = !fenced; continue; }
+        if (fenced || /^\s*>/.test(raw)) continue;
+        const line = clean(raw);
+        const heading = line.replace(/\s*\([^)]*\)\s*$/, '').replace(/:\s*$/, '').trim();
+        if (/\bknown spells\b/i.test(heading)) {
+            const owner = spellKey(heading.replace(/\bknown spells\b/i, '').replace(/[’']s\b/gi, '').replace(/\b(?:of|for|list)\b/gi, ''));
+            active = owner === 'your' || owner === 'you' || owner === 'player' || !!identity && owner === identity;
+            continue;
+        }
+        if (/^(?:spells you (?:already )?know|you (?:already )?know (?:these|the following) spells):?$/i.test(line)) { active = true; continue; }
+        if (!active || !line) continue;
+        if (/^(?:not (?:trained|known|learned)|unlearned|unknown spells|available spells|spells to learn|studying|notes?|requirements?|equipment|inventory)\b/i.test(line)) { active = false; continue; }
+        const tier = /^(?:beginner|elementary|basic|intermediate|advanced|saint|king|emperor|imperial|god|divine|unranked|rank unknown)(?:\s+(?:tier|rank))?\s*:\s*/i;
+        const bullet = /^\s*[-+•]\s+/;
+        const listed = bullet.test(raw) || tier.test(line) || line.includes('·');
+        if (!listed) {
+            const school = /(?:\b(?:rank|tier|magic)\b|^(?:water|earth|fire|wind|healing|summoning|barrier|other|unranked)$)/i.test(heading);
+            if ((/^\s*#{1,6}\s/.test(raw) || /^\s*\*\*[^*]+\*\*\s*$/.test(raw)) && !school) active = false;
+            continue;
+        }
+        if (/\b(?:can learn|could learn|not learned|not known|not trained|not yet|unlearned|unavailable|do not know|don't know|wish|recommended|requires|costs?|per cast)\b/i.test(line)) continue;
+        const body = line.replace(bullet, '').replace(tier, '');
+        for (let name of body.split(/\s*[·;,]\s*/)) {
+            name = name.replace(/\s*:\s+.*$/, '').replace(/\s+[—–]\s+.*$/, '').trim();
+            name = name.replace(/\s*\((?:beginner|elementary|intermediate|advanced|saint|king|emperor|imperial|god|divine|small-scale\b[^)]*|localized\b[^)]*|basic section\b[^)]*|warming\b[^)]*)\)\s*$/i, '').trim();
+            if (!name || name.length > 80 || name.split(/\s+/).length > 8 || /[.!?]|^(?:none|unknown|not trained)$/i.test(name)) continue;
+            const key = spellKey(name);
+            if (!key || seen.has(key)) continue;
+            seen.add(key); out.push(name);
+            if (out.length >= 120) return out;
+        }
+    }
+    return out;
+}
+
+const spellEstablishedCache = new Map();
+function spellEstablishedNames(message, playerName) {
+    const text = textOf(message.content);
+    const key = `${message.id}:${message.swipe_id ?? 0}:${spellKey(playerName)}`;
+    const cached = spellEstablishedCache.get(key);
+    if (cached && cached.text === text) return cached.names;
+    const names = /\bknown spells\b|\bspells you (?:already )?know\b|\byou (?:already )?know (?:these|the following) spells\b/i.test(text)
+        ? spellEstablishedList(stripCompanion(stripLeakedReasoning(text)), playerName) : [];
+    spellEstablishedCache.set(key, { text, names });
+    while (spellEstablishedCache.size > 600) spellEstablishedCache.delete(spellEstablishedCache.keys().next().value);
+    return names;
+}
+
+function spellStoryFold(chat, chatId = null) {
+    const id = chatId || chatIdOf(chat);
+    return memoRead(chat, `spells:${id || ''}`, () => spellStoryFoldUncached(chat, id));
 }
 const spellAliasIndexes = new WeakMap();
 function spellResolver(chatId) {
@@ -14793,15 +14872,21 @@ function spellResolveState(chatId, st, fold) {
     };
     return { st: { ...st, spellbook: rows(st?.spellbook), spellStudy: rows(st?.spellStudy),
         spellForget: anchors(st?.spellForget), spellStudyStopped: anchors(st?.spellStudyStopped) },
-        fold: { ...fold, learned: events(fold.learned), mastered: events(fold.mastered), progress: events(fold.progress) } };
+        fold: { ...fold, established: events(fold.established || new Map()), learned: events(fold.learned), mastered: events(fold.mastered), progress: events(fold.progress) } };
 }
 
-function spellStoryFoldUncached(chat) {
+function spellStoryFoldUncached(chat, chatId = null) {
+    const playerName = chatId ? userNameCache.get(chatId) || '' : '';
+    const established = new Map();
     const learned = new Map(), mastered = new Map(), progress = new Map(), order = new Map();
     let i = 0;
     for (const m of chat || []) {
         if (m.role !== 'assistant') continue;
         order.set(m.id, i++);
+        for (const name of spellEstablishedNames(m, playerName)) {
+            const key = spellKey(name);
+            if (key) established.set(key, { name, msgId: m.id, at: order.get(m.id) });
+        }
         const d = getSwipeData(m);
         const y = d && isPlainObject(d.survival) ? d.survival : null;
         if (!y) continue;
@@ -14809,7 +14894,7 @@ function spellStoryFoldUncached(chat) {
         for (const n of Array.isArray(y.mastered) ? y.mastered : []) { const k = spellKey(n); if (k) mastered.set(k, { name: n, msgId: m.id, at: order.get(m.id) }); }
         for (const s of Array.isArray(y.study) ? y.study : []) if (s && s.spell) progress.set(spellKey(s.spell), { name: s.spell, progress: s.progress, note: s.note || null, msgId: m.id, at: order.get(m.id) });
     }
-    return { learned, mastered, progress, order };
+    return { learned, mastered, progress, order, established };
 }
 
 // A shorter spell name is often a different spell (Water Ball / Water Ball Storm).
@@ -14818,7 +14903,7 @@ function spellSame(a, b) { return a === b; }
 
 /** The names the player knows: the spellbook, and what the story said they learned since they last cleared it. */
 function spellKnown(chat, st, fold, chatId = null) {
-    const resolved = spellResolveState(chatId || chatIdOf(chat), st, fold || spellStoryFold(chat));
+    const resolved = spellResolveState(chatId || chatIdOf(chat), st, fold || spellStoryFold(chat, chatId));
     const f = resolved.fold; st = resolved.st;
     const forget = isPlainObject(st && st.spellForget) ? st.spellForget : {};
     const allowed = (key, event) => {
@@ -14831,6 +14916,7 @@ function spellKnown(chat, st, fold, chatId = null) {
         const key = spellKey(sp.name);
         if (key && sp.from !== 'story' && sp.from !== 'fight' && !(key in forget)) out.set(key, { name: sp.name, from: sp.from || 'you' });
     }
+    for (const [key, event] of f.established) if (!(key in forget) && !out.has(key)) out.set(key, { name: event.name, from: 'established', msgId: event.msgId });
     for (const [key, event] of f.learned) if (allowed(key, event) && !out.has(key)) out.set(key, { name: event.name, from: 'learned', msgId: event.msgId });
     for (const [key, event] of f.mastered) if (allowed(key, event)) {
         if (!out.has(key)) out.set(key, { name: event.name, from: 'mastered', msgId: event.msgId });
@@ -14841,7 +14927,7 @@ function spellKnown(chat, st, fold, chatId = null) {
 
 /** Manual study choices and practice the story reported, rebuilt from the active swipes. */
 function spellStudyActive(chat, st, fold = null, chatId = null) {
-    const resolved = spellResolveState(chatId || chatIdOf(chat), st, fold || spellStoryFold(chat));
+    const resolved = spellResolveState(chatId || chatIdOf(chat), st, fold || spellStoryFold(chat, chatId));
     const f = resolved.fold; st = resolved.st;
     const active = new Map();
     for (const s of Array.isArray(st && st.spellStudy) ? st.spellStudy : []) if (s && s.name) active.set(spellKey(s.name), s);
@@ -14867,7 +14953,7 @@ function spellListPanel(chatId, chat, st, sys) {
         return null;
     }
     const stand = spellStanding(sys && sys._lines ? sys._lines : []);
-    const resolved = spellResolveState(chatId, st, spellStoryFold(chat));
+    const resolved = spellResolveState(chatId, st, spellStoryFold(chat, chatId));
     const fold = resolved.fold; st = resolved.st;
     const known = spellKnown(chat, st, fold, chatId);
     const knownKeys = [...known.keys()];
@@ -14939,7 +15025,7 @@ function spellListPanel(chatId, chat, st, sys) {
 
 /** The spells being studied, as the reminder the model sees before it writes. Null when there are none. */
 function spellStudyReminder(chatId, chat, st, userName) {
-    const resolved = spellResolveState(chatId, st, spellStoryFold(chat));
+    const resolved = spellResolveState(chatId, st, spellStoryFold(chat, chatId));
     const fold = resolved.fold; st = resolved.st;
     const study = spellStudyActive(chat, st, fold, chatId);
     if (!study.length) return null;

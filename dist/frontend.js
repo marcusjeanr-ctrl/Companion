@@ -565,6 +565,7 @@ button.rpgc-chip.intel:hover { border-color: var(--lumiverse-accent, #7aa2f7); }
 .rpgc-agenda-item > .rpgc-mini { flex: none; }
 .rpgc-agenda-item.overdue { border-left-color: #d9534f; } .rpgc-agenda-item.overdue .due { color: color-mix(in srgb, #d9534f 75%, var(--lumiverse-text, #ddd)); font-weight: 600; }
 .rpgc-agenda-item.soon { border-left-color: #d8a33a; } .rpgc-agenda-item.soon .due { color: color-mix(in srgb, #c08a1e 75%, var(--lumiverse-text, #ddd)); font-weight: 600; }
+.rpgc-agenda-item.in_progress { border-left-color: #5fae6e; }
 .rpgc-agenda-item.upcoming { border-left-color: var(--lumiverse-accent, #7aa2f7); }
 .rpgc-agenda-item.kept { border-left-color: #5fae6e; opacity: .8; } .rpgc-agenda-item.missed, .rpgc-agenda-item.cancelled { opacity: .7; }
 .rpgc-agenda-item.new b { color: var(--lumiverse-accent, #7aa2f7); }
@@ -1124,7 +1125,7 @@ export function setup(ctx) {
         id: 'rpg-companion-hms',
         title: 'RPG Companion (HMS)',
         shortName: 'RPG',
-        headerTitle: 'RPG Companion HMS Edition 2.8.15 compatibility candidate',
+        headerTitle: 'RPG Companion HMS Edition 2.8.16 compatibility candidate',
         description: 'The side panel for HMS bots: the HUD as cards, people, quests, the map, fights, the Chronicle, and a guide',
         keywords: ['rpg', 'hms', 'tracker', 'hud', 'quests', 'dice', 'guide'],
         iconSvg: ICON_SVG
@@ -3930,6 +3931,7 @@ export function setup(ctx) {
     function agendaOf() { return (state.hms && state.hms.agenda) || (state.extras && state.extras.agenda) || null; }
     const AGENDA_ICON = { meeting: '🤝', promise: '🤞', deadline: '⏳', event: '📅', errand: '🧭' };
     function agendaDue(x) {
+        if (x.state === 'in_progress') return T('In progress');
         if (x.state !== 'open') return { kept: 'kept', missed: 'missed', cancelled: 'called off' }[x.state] || x.state;
         if (x.dueIn === null || x.dueIn === undefined) return x.when || 'no set time';
         if (x.dueIn < -60) return TT('{0} late', fmtSpan(-x.dueIn));
@@ -3944,19 +3946,19 @@ export function setup(ctx) {
             h('span', { class: 'body' }, h('b', null, x.what),
                 h('span', { class: 'due' }, agendaDue(x)),
                 h('span', { class: 'meta' }, [x.with ? TT('with {0}', x.with) : null, x.where ? TT('at {0}', x.where) : null, x.mine ? T('set by you') : x.from === 'you' ? T('added by you') : null].filter(Boolean).join(' · '))),
-            x.state === 'open' ? h('span', { class: 'acts' }, act('kept', '✓', 'It happened'), act('missed', '✗', 'Its time passed without it'), act('cancelled', '⊘', 'Called off')) : act('removed', '✕', 'Remove from the list'));
+            (x.state === 'open' || x.state === 'in_progress') ? h('span', { class: 'acts' }, act('kept', '✓', 'It happened'), act('missed', '✗', 'Its time passed without it'), act('cancelled', '⊘', 'Called off')) : act('removed', '✕', 'Remove from the list'));
     }
     function renderAgenda() {
         const a = agendaOf();
         const c = (sysCfg().agenda) || {};
         if (!a || c.enabled === false) return null;
         const out = [];
-        const groups = [['overdue', '⚠️ Late'], ['soon', '⏰ Soon (next 3 hours)'], ['upcoming', '📅 Coming up'], ['unset', '❔ No set time']];
+        const groups = [['in_progress', '▶ In progress'], ['overdue', '⚠️ Late'], ['soon', '⏰ Soon (next 3 hours)'], ['upcoming', '📅 Coming up'], ['unset', '❔ No set time']];
         for (const [st, title] of groups) {
             const list = a.items.filter(x => x.status === st);
             if (list.length) out.push(h('div', { class: 'rpgc-agenda-group ' + st }, h('h4', null, title), h('ul', null, list.map(agendaRow))));
         }
-        const done = a.items.filter(x => x.state !== 'open');
+        const done = a.items.filter(x => x.state !== 'open' && x.state !== 'in_progress');
         if (!out.length) out.push(h('p', { class: 'rpgc-note' }, a.ask
             ? 'Appointments and promises show up here as they are made — “I’ll meet you at the river tomorrow”, “the exam is on Friday”. With a clock on the HUD, the panel counts down to each and tells the story when one is due.'
             : 'Asking the story about appointments is off (Settings → HMS systems → Agenda). You can still add your own.'));
@@ -3973,8 +3975,10 @@ export function setup(ctx) {
         const add = () => { const w = whatIn.value.trim(); if (!w) return; send({ type: 'agenda', chatId: state.chatId, op: 'add', what: w, when: whenIn.value.trim(), with: withIn.value.trim() }); whatIn.value = ''; whenIn.value = ''; withIn.value = ''; };
         for (const x of [whatIn, whenIn, withIn]) x.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
         out.push(h('div', { class: 'rpgc-add', style: 'flex-wrap:wrap' }, whatIn, whenIn, withIn, h('button', { class: 'rpgc-btn', onclick: add }, 'Add')));
+        const active = a.items.filter(x => x.status === 'in_progress').length;
         const late = a.items.filter(x => x.status === 'overdue').length, soon = a.items.filter(x => x.status === 'soon').length;
-        const sec = section('agenda', 'Agenda', state.open, late ? `${late} late` : soon ? `${soon} soon` : a.items.filter(x => x.state === 'open').length ? String(a.items.filter(x => x.state === 'open').length) : null, ...out);
+        const summary = [active ? `${active} in progress` : null, late ? `${late} late` : null, soon ? `${soon} soon` : null].filter(Boolean).join(' · ');
+        const sec = section('agenda', 'Agenda', state.open, summary || (a.items.filter(x => x.state === 'open').length ? String(a.items.filter(x => x.state === 'open').length) : null), ...out);
         if (late) sec.classList.add('alarm');
         return sec;
     }
@@ -6243,7 +6247,7 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
             if (!popWin || popWin.closed) {
                 popWin = window.open('', 'rpgc_popout', 'width=460,height=860');
                 if (!popWin) { state.status = { kind: 'warning', text: 'The browser blocked the pop-out window. Allow pop-ups for Lumiverse and try again.' }; const s = S(); s.uiPanelMode = 'drawer'; return applyPanelMode(); }
-                popWin.document.title = 'RPG Companion HMS Edition 2.8.15 compatibility candidate';
+                popWin.document.title = 'RPG Companion HMS Edition 2.8.16 compatibility candidate';
                 syncPopoutLook(popWin);
                 try { if (!popLookObs) { popLookObs = new MutationObserver(() => syncPopoutLook(popWin)); popLookObs.observe(document.documentElement, { attributes: true }); if (document.body) popLookObs.observe(document.body, { attributes: true, attributeFilter: ['class'] }); } } catch { /* optional */ }
                 popWin.addEventListener('beforeunload', () => { popWin = null; if (panelMode() === 'popout') { const s = S(); s.uiPanelMode = 'drawer'; saveSettings(false); applyPanelMode(); render(); } });
