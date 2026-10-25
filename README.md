@@ -1,6 +1,4 @@
-> **2.8.2 — Clean Compatibility Rebuild.** Built from the exact supplied 2.8.1 archive with verified 2.8.21 behavior reintroduced by subsystem. See [audit, build, install and rollback instructions](tools/CLEAN_REBUILD.md) and [performance results](tools/PERFORMANCE_2_8_2.md). Publication to the live update source was explicitly authorized after testing. Version 2.8.2 sorts below 2.8.21; if Lumiverse does not offer it as an update, install the complete ZIP manually while preserving existing data.
-
-# RPG Companion HMS Edition 2.8 beta
+# RPG Companion HMS Edition 2.9 beta
 
 The side panel for the **HMS Living World** bots: Re:Zero, Mushoku Tensei, Classroom of the Elite and
 Overlord (and Undertale, Dark Souls and Skyrim bots). In an HMS chat the bot's WORLD STATE HUD **is** the
