@@ -2217,7 +2217,7 @@ async function pushState(chatId) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.5-rc.1';
+const RPGC_VERSION = '2.8.6-rc.1';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -9626,9 +9626,10 @@ function buildCompanionInstruction(committed, userName, locks, st = null, chat =
         if (wantSurvival) yf.push('"slept": false, "ate": false, "drank": false, "rested": false', `"mind": "${HMS_MIND_SCALE.join('|')}"`);
         if (yc.on) { yf.push(wantSurvival ? '"mood": "1-3 words", "sanity": 0..100' : '"mood": "1-3 words", "stress": "L", "sanity": 0..100'); if (askXp) yf.push('"xp": 0, "xpWhy": "or null"'); yf.push('"got": [], "lost": []'); }
         if (magicSeen) yf.push('"spells": ["named spells the player demonstrably learned or successfully cast this reply; never spells merely listed, demonstrated by another person, or attempted unsuccessfully"]');
-        const studying = magicSeen && st && Array.isArray(st.spellStudy) ? st.spellStudy.filter(x => x && x.name).map(x => x.name).slice(0, 8) : [];
-        if (studying.length) yf.push(`"learned": ["a spell ${userName} truly learned this reply: a first clean cast, or a teacher's sign-off; else leave empty"], "study": [{"spell": "one of: ${studying.join(', ')}", "progress": "number only if the story explicitly measures it; otherwise null", "note": "observed practice, or null"}]`);
-        if (magicSeen && tlNow.length && worldOf(worldLines(tlNow[tlNow.length - 1].hud)) === 'mushoku')
+        const mushokuMagic = magicSeen && tlNow.length && worldOf(worldLines(tlNow[tlNow.length - 1].hud)) === 'mushoku';
+        const studying = magicSeen ? spellStudyActive(chat, st).map(x => x.name).slice(0, 8) : [];
+        if (mushokuMagic || studying.length) yf.push(`"learned": ["a spell ${userName} truly learned this reply: a first clean cast, or a teacher's sign-off; else leave empty"], "study": [{"spell": "${mushokuMagic ? 'a named spell intentionally practiced this turn' : `one of: ${studying.join(', ')}`}", "progress": "number only if the story explicitly measures it; otherwise null", "note": "observed practice, or null"}]`);
+        if (mushokuMagic)
             yf.push(`"mastered": ["named spell only when the story explicitly establishes reliable or exceptional mastery by ${userName}; otherwise empty"]`);
         parts.push(`"you": {${yf.join(', ')}}`);
     }
@@ -9687,6 +9688,7 @@ function buildCompanionInstruction(committed, userName, locks, st = null, chat =
     if (posReq) s += '\n' + posReq.rules;
     if (wantSurvival) s += `\nIn "you", set a flag to true only if ${userName} actually did it in this reply's events: a proper sleep counts as slept; a short break or sitting down counts as rested; a real meal counts as ate. Set "mind" to ${userName}'s state of mind at the end of this reply, as one of the listed words.`;
     if (yc.on) s += `\n"you" also holds ${userName}'s own state at the end of this reply: mood, ${wantSurvival ? '' : 'stress (L), '}sanity (100 steady, 0 broken)${askXp ? ', and xp earned in this reply for a real accomplishment (0 if none) with why' : ''}. "got" and "lost": physical things ${userName} was handed, picked up, gave away, used up or lost — in their own last message or on screen in this reply — that the HUD does not list (a handout, a key, a note, a booklet), a few words each; [] when nothing changed hands. A message, a notice or news is not a thing.`;
+    if (magicSeen && tlNow.length && worldOf(worldLines(tlNow[tlNow.length - 1].hud)) === 'mushoku') s += `\nIn "you.study", report only a named spell ${userName} intentionally practiced or was taught in the player's last message or this reply; [] if no practice occurred. A demonstration by someone else, a spell list, or a failed combat attempt is not study. Never invent a progress percentage. In "you.learned" report only spells demonstrably learned, not merely attempted.`;
     if (wantQuests) s += '\n"quests": details of quests active in the story, one entry each — details only; the story decides which quests exist.';
     if (plotReq) s += '\n' + plotReq.rules;
     if (momReq) s += '\n' + momReq.rules;
@@ -14463,7 +14465,7 @@ function spellStoryFold(chat) {
         if (!y) continue;
         for (const n of Array.isArray(y.learned) ? y.learned : []) { const k = spellKey(n); if (k && !learned.has(k)) learned.set(k, { name: n, msgId: m.id, at: order.get(m.id) }); }
         for (const n of Array.isArray(y.mastered) ? y.mastered : []) { const k = spellKey(n); if (k) mastered.set(k, { name: n, msgId: m.id, at: order.get(m.id) }); }
-        for (const s of Array.isArray(y.study) ? y.study : []) if (s && s.spell) progress.set(spellKey(s.spell), { progress: s.progress, note: s.note || null, msgId: m.id });
+        for (const s of Array.isArray(y.study) ? y.study : []) if (s && s.spell) progress.set(spellKey(s.spell), { name: s.spell, progress: s.progress, note: s.note || null, msgId: m.id, at: order.get(m.id) });
     }
     return { learned, mastered, progress, order };
 }
@@ -14491,6 +14493,19 @@ function spellKnown(chat, st, fold) {
     return out;
 }
 
+/** Manual study choices and practice the story reported, rebuilt from the active swipes. */
+function spellStudyActive(chat, st, fold = null) {
+    const f = fold || spellStoryFold(chat);
+    const active = new Map();
+    for (const s of Array.isArray(st && st.spellStudy) ? st.spellStudy : []) if (s && s.name) active.set(spellKey(s.name), s);
+    const stopped = isPlainObject(st && st.spellStudyStopped) ? st.spellStudyStopped : {};
+    for (const [key, p] of f.progress) {
+        const after = stopped[key] && f.order.has(stopped[key]) ? f.order.get(stopped[key]) : -1;
+        if (p.at > after && !active.has(key)) active.set(key, { name: p.name, school: null, rank: null, from: 'story' });
+    }
+    return [...active.values()].slice(-8);
+}
+
 const SPELL_STATUS_ORDER = { mastered: 0, known: 1, study: 2, reach: 3, next: 4, unranked: 5, open: 6, special: 7, locked: 8 };
 
 /** The spell list for the Magic card: each spell with where it stands for you. Null when the lorebook has none. */
@@ -14508,7 +14523,7 @@ function spellListPanel(chatId, chat, st, sys) {
     const known = spellKnown(chat, st, fold);
     const knownKeys = [...known.keys()];
     const isKnown = (k) => known.has(k) || knownKeys.some(x => spellSame(x, k));
-    const study = (Array.isArray(st && st.spellStudy) ? st.spellStudy : []).filter(s => s && s.name);
+    const study = spellStudyActive(chat, st, fold);
     const studyKeys = new Set(study.map(s => spellKey(s.name)));
     const ladderOf = (r) => SPELL_LADDER[r.ladder] || SPELL_LADDER.mt;
     const needs = (r) => (r.ladder === 'rz' ? `Needs ${SPELL_LADDER.rz[r.step]} tier (Gate ${['F', 'D', 'C', 'B', 'S'][r.step]} or better)` : `Needs ${ladderOf(r)[r.step]}`);
@@ -14575,12 +14590,12 @@ function spellListPanel(chatId, chat, st, sys) {
 
 /** The spells being studied, as the reminder the model sees before it writes. Null when there are none. */
 function spellStudyReminder(chatId, chat, st, userName) {
-    const study = (Array.isArray(st && st.spellStudy) ? st.spellStudy : []).filter(s => s && s.name);
+    const fold = spellStoryFold(chat);
+    const study = spellStudyActive(chat, st, fold);
     if (!study.length) return null;
     const known = spellKnown(chat, st);
     const kk = [...known.keys()];
     const cat = spellCatalog(chatId);
-    const fold = spellStoryFold(chat);
     const rows = [];
     for (const s of study) {
         const k = spellKey(s.name);
@@ -14588,7 +14603,7 @@ function spellStudyReminder(chatId, chat, st, userName) {
         const r = cat.find(x => x.key === k) || cat.find(x => spellSame(x.key, k));
         const pr = fold.progress.get(k);
         const bits = [r ? r.school : s.school, r && r.rank ? r.rank : s.rank].filter(Boolean).join(', ');
-        rows.push(`- ${r ? r.name : s.name}${bits ? ` (${bits})` : ''}${pr && Number.isFinite(Number(pr.progress)) ? ` — progress so far ${Math.round(Number(pr.progress))}%` : ''}${r && r.effect ? `. Effect: ${r.effect}` : ''}${r && r.chant ? ` Chant: "${r.chant}"` : ''}`);
+        rows.push(`- ${r ? r.name : s.name}${bits ? ` (${bits})` : ''}${pr && pr.progress !== null && pr.progress !== undefined && Number.isFinite(Number(pr.progress)) ? ` — progress so far ${Math.round(Number(pr.progress))}%` : ''}${r && r.effect ? `. Effect: ${r.effect}` : ''}${r && r.chant ? ` Chant: "${r.chant}"` : ''}`);
     }
     if (!rows.length) return null;
     return `[RPG Companion: spell study] ${userName} is studying these spells:\n${rows.join('\n')}\n` +
@@ -15344,6 +15359,13 @@ spindle.onFrontendMessage(async (payload, userId) => {
                 const st = await getChatState(payload.chatId);
                 const name = payload.name.trim().slice(0, 60), k = spellKey(name);
                 const list = (Array.isArray(st.spellStudy) ? st.spellStudy : []).filter(x => x && spellKey(x.name) !== k);
+                if (!isPlainObject(st.spellStudyStopped)) st.spellStudyStopped = {};
+                if (payload.on) delete st.spellStudyStopped[k];
+                else {
+                    const chat = await chatApi.getMessages(payload.chatId).catch(() => []);
+                    const last = [...(chat || [])].reverse().find(m => m.role === 'assistant');
+                    st.spellStudyStopped[k] = last ? last.id : null;
+                }
                 if (payload.on) list.push({ name, school: typeof payload.school === 'string' ? payload.school.slice(0, 40) : null, rank: typeof payload.rank === 'string' ? payload.rank.slice(0, 40) : null, since: Date.now() });
                 st.spellStudy = list.slice(-8);
                 await saveChatState(payload.chatId, st);
@@ -15361,6 +15383,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
                     spellbookAdd(st, [{ name }], 'you');
                     delete st.spellForget[k];
                     st.spellStudy = (Array.isArray(st.spellStudy) ? st.spellStudy : []).filter(x => x && spellKey(x.name) !== k);
+                    if (isPlainObject(st.spellStudyStopped)) delete st.spellStudyStopped[k];
                 } else {
                     st.spellbook = (Array.isArray(st.spellbook) ? st.spellbook : []).filter(x => spellKey(x.name) !== k);
                     const chat = await chatApi.getMessages(payload.chatId).catch(() => []);

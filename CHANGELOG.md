@@ -1,3 +1,10 @@
+## 2.8.6 compatibility candidate — automatic spell study
+
+- Detect named spell practice in either Mushoku chat without requiring the Study button.
+- Keep observed study in the Magic panel and model reminder; respect manual stop until new practice occurs.
+- Mark a spell Known only after an established learned cast or explicit learning report; never infer a percentage from null.
+- Add progression regression tests for Studying, manual stop, resumed practice, and Known.
+
 ## 2.8.5 compatibility candidate — unranked spell accuracy
 
 - Show spells with no stated lorebook rank as Rank unknown instead of Within reach.

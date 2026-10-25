@@ -15,6 +15,7 @@ const code = [
  section('function spellStanding(lines)', '/** What the story reports'),
  section('function spellStoryFold(chat)', 'const SPELL_STATUS_ORDER ='),
  section('const SPELL_STATUS_ORDER =', '/** The spells being studied'),
+ section('function spellStudyReminder(', '/** The catalog in the Master Spell Index'),
  section('function plotCfg()', 'function objectivesNormalize(list)'),
  section('const AGENDA_KINDS =', 'function agendaNormalize(list)'),
  section('function agendaNormalize(list)', 'function agendaRequest('),
@@ -98,6 +99,18 @@ const rankPanel=ctx.spellListPanel('test',[],{}, {_lines:h6.lines});
 assert.equal(rankPanel.schools.find(s=>s.name==='Earth').spells.find(s=>s.name==='Earth Wall').status,'unranked');
 assert.equal(rankPanel.schools.find(s=>s.name==='Earth').reach,1);
 assert.equal(rankPanel.schools.find(s=>s.name==='Earth').unranked,1);
+const practice=[{id:'p1',role:'assistant',data:{survival:{study:[{spell:'Earth Wall',progress:null,note:'Practiced shaping a short wall'}]}}}];
+const practicePanel=ctx.spellListPanel('test',practice,{}, {_lines:h6.lines});
+assert.equal(practicePanel.schools.find(s=>s.name==='Earth').spells.find(s=>s.name==='Earth Wall').status,'study');
+assert.equal(practicePanel.schools.find(s=>s.name==='Earth').spells.find(s=>s.name==='Earth Wall').progress,null);
+assert.match(ctx.spellStudyReminder('test',practice,{},'the player'),/Earth Wall/);
+assert(!ctx.spellStudyReminder('test',practice,{},'the player').includes('0%'));
+const stopped={spellStudyStopped:{'earth wall':'p1'}};
+assert.equal(ctx.spellListPanel('test',practice,stopped,{_lines:h6.lines}).schools.find(s=>s.name==='Earth').spells.find(s=>s.name==='Earth Wall').status,'unranked');
+const resumed=[...practice,{id:'p2',role:'assistant',data:{survival:{study:[{spell:'Earth Wall',progress:30,note:'Worked with a teacher'}]}}}];
+assert.equal(ctx.spellListPanel('test',resumed,stopped,{_lines:h6.lines}).schools.find(s=>s.name==='Earth').spells.find(s=>s.name==='Earth Wall').status,'study');
+const learned=[...resumed,{id:'p3',role:'assistant',data:{survival:{learned:['Earth Wall']}}}];
+assert.equal(ctx.spellListPanel('test',learned,{}, {_lines:h6.lines}).schools.find(s=>s.name==='Earth').spells.find(s=>s.name==='Earth Wall').status,'known');
 assert.equal(w6.saga.participation,'personal'); assert.equal(w6.saga.personalArc,'Sandbox');
 assert.equal(wl.saga.participation,'explicit');
 assert.equal(ctx.hmsClockTest(h6).dated,true);
@@ -153,4 +166,4 @@ assert(!ctx.plotRequest('Marcus',false).json.includes('canonEvents'));
 evalExpr('entries').push(...arcEntries);
 assert.equal(ctx.mtArcList('test').length,22);
 assert.equal(ctx.mtArcList('test').find(x=>x.no===3).year,417);
-console.log('Compatibility assertions passed: both HUDs, 30-day calendar, Atlas, unranked spells, family, saga ledger, objectives, gear, and 22 lorebook arcs.');
+console.log('Compatibility assertions passed: both HUDs, 30-day calendar, Atlas, automatic spell study and learning, family, saga ledger, objectives, gear, and 22 lorebook arcs.');
