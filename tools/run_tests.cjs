@@ -14,3 +14,4 @@ for (const file of files) {
     if (result.status !== 0) process.exit(result.status || 1);
 }
 console.log(`All ${files.length} regression suites and both bundle syntax checks passed.`);
+

@@ -2574,7 +2574,6 @@
  "spell: Known": "Conhecida",
  "spell: Studying": "Estudando",
  "spell: Within reach": "Ao alcance",
- "spell: Rank unknown": "Rank desconhecido",
  "spell: In the lorebook": "No lorebook",
  "spell: Next rank": "Próximo rank",
  "spell: Locked": "Bloqueada",
@@ -2587,7 +2586,6 @@
  "{0} known": "{0} conhecidas",
  "{0} studying": "{0} em estudo",
  "{0} within reach": "{0} ao alcance",
- "{0} rank unknown": "{0} sem rank definido",
  "{0} next": "{0} próximas",
  "Not learned after all: take it off": "Não aprendeu afinal: tirar",
  "Study it: the story is reminded, and reports how it goes": "Estudar: a história é lembrada e informa como vai",
@@ -2614,5 +2612,7 @@
  "1 year to Arc {0}": "1 ano até o Arco {0}",
  "Arc {0} begins this year": "o Arco {0} começa este ano",
  "the last arc": "o último arco",
- "All {0} arcs": "Todos os {0} arcos"
+ "All {0} arcs": "Todos os {0} arcos",
+ "spell: Rank unknown": "Rank desconhecido",
+ "{0} rank unknown": "{0} sem rank definido"
 }

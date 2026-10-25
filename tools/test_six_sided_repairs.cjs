@@ -78,3 +78,4 @@ async function main() {
     console.log('Audit repairs passed: two calendars, month/year rollovers, deadlines, birthdays, hidden ranks, multiple styles, five continents, complete Saga/sub-arcs, and swipe/forget/relearn/mastery/manual spell lifecycles.');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});
+

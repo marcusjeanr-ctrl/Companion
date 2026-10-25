@@ -96,3 +96,4 @@ current.metadata.rpg_companion.swipes[0] = { plot: { threads: [], canonEvents: [
     ui.dispose();
     console.log('General tracking passed: 20 established spells, player ownership, catalog/quote/negation exclusions, aliases, Forget/relearn, edits/swipes, explicit activity lifecycle, no clock-only start and active Agenda rendering.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+

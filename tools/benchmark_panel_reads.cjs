@@ -9,7 +9,8 @@ for (const filename of files) {
     const rt = runtime(filename);
     const samples = [];
     // 300 active readings, with user turns, many rooms, and full panel metadata.
-    for (let i = 0; i < 300; i++) {
+    const replies = Math.max(1, Math.min(5000, Number(process.env.COMPANION_BENCH_REPLIES) || 300));
+    for (let i = 0; i < replies; i++) {
         rt.messages.push({ id: `u${i}`, role: 'user', content: 'I continue training.' });
         const data = rt.ctx.parseCompanion(`<rpg_companion>${JSON.stringify(reading)}</rpg_companion>`, [], null, null);
         rt.messages.push({ id: `a${i}`, role: 'assistant', swipe_id: 0,
@@ -41,3 +42,4 @@ for (const filename of files) {
     console.log(JSON.stringify({ file: filename, messages: rt.messages.length, coldMs: +coldMs.toFixed(2),
         medianMs: +((samples[4] + samples[5]) / 2).toFixed(2), warnings: rt.warnings.length }));
 }
+

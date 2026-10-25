@@ -1,7 +1,4 @@
-> Six-Sided World compatibility fork of [RPG Companion HMS](https://github.com/TenderTriper/rpg-companion-hms). Version 2.8.21 — Tracking Source Integrity. The Reporter preset and other world features come from the upstream package. See [compatibility notes](tools/SIX_SIDED_COMPAT.md) for scope and live validation limits.
-
-The 2.8.21 audit, source handling and targeted validation changes are documented in [source-integrity validation](tools/VALIDATION_2_8_21.md). The [2.8.20 reconciliation fixes](tools/VALIDATION_2_8_20.md), [2.8.19 parser/display repairs](tools/VALIDATION_2_8_19.md) and earlier stability fixes are retained. The 2.8.18 format and utility-workflow changes are documented in [updated-card validation](tools/UPDATED_SIX_SIDED_2_8_18.md). The general fixes apply to the shared Companion engines, including classic tracking. Read the [categorized audit and validation report](tools/AUDIT_2_8_17.md). Run all regression suites with `node tools/run_tests.cjs`. Existing saves and the extension identifier are preserved.
-
+> **2.8.2 — Clean Compatibility Rebuild.** Built from the exact supplied 2.8.1 archive with verified 2.8.21 behavior reintroduced by subsystem. See [audit, build, install and rollback instructions](tools/CLEAN_REBUILD.md) and [performance results](tools/PERFORMANCE_2_8_2.md). Publication to the live update source was explicitly authorized after testing. Version 2.8.2 sorts below 2.8.21; if Lumiverse does not offer it as an update, install the complete ZIP manually while preserving existing data.
 
 # RPG Companion HMS Edition 2.8 beta
 
@@ -736,4 +733,3 @@ is by **Pyropia**.
 **RPG Companion** by **Marinara** (Marysia, marinara_spaghetti), licensed AGPL-3.0. Panels,
 presets, dice, deception tags, immersive HTML, portraits and the prompt editor are hers.
 This fork stays AGPL-3.0 — see `LICENSE`.
-

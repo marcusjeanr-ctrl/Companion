@@ -2341,7 +2341,7 @@ async function pushState(chatId, snapshot = null) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.21';
+const RPGC_VERSION = '2.8.2';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -6585,21 +6585,7 @@ function mtRankRows(text, ranks) {
 }
 
 function mushokuLocationSegments(segments) {
-    if (!Array.isArray(segments)) return [];
-    // Six-Sided combines geographic levels and rooms with commas. Respect brackets and
-    // parentheses so a qualifier is never mistaken for another location.
-    const out = [];
-    for (const segment of segments) {
-        let depth = 0, current = '';
-        for (const ch of String(segment)) {
-            if (ch === '(' || ch === '[') depth++;
-            else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
-            if (ch === ',' && depth === 0) { if (current.trim()) out.push(current.trim()); current = ''; }
-            else current += ch;
-        }
-        if (current.trim()) out.push(current.trim());
-    }
-    return out;
+    return Array.isArray(segments) ? segments.flatMap(segment => hmsSplitTop(segment, /,/g)) : [];
 }
 // "Location: ◆ World → Region → Place" (Mushoku Tensei and others label the path): the label is not a segment.
 const LOC_LABEL_RE = /^(?:\*\*)?(?:current\s+)?(?:location|place|where)(?:\*\*)?\s*:(?:\*\*)?\s*(?=[◆◇⌖►▶•]|[^:\n]*(?:→|⟶|➜))/i;
@@ -8991,6 +8977,8 @@ function worldLines(hud) { return hud ? hud.lines.map(l => String(l.text || '').
 /** Which of the four bots this HUD belongs to, or null. */
 function worldOf(lines) {
     const t = lines.join('\n');
+    const cache = activeReadPass ? memoRead(activeReadPass.chat, 'worldIdentity', () => new Map()) : null;
+    if (cache && cache.has(t)) return cache.get(t);
     const s = {
         rezero: 2 * /^(Deaths|Witch's Scent|Default Save Point|Save Point):/m.test(t) + /\[(AUTHORITY|SPIRIT CONTRACT|MENTAL COUNCIL)\b/i.test(t) + 2 * /World of Re:Zero/i.test(t) + /Lugunica|Now Playing: \[REEL:|Arc 0\s*[\u2014\u2013-]\s*Part/i.test(t) + /^Od Integrity:|^Magic: [^|]+\| Gate:/m.test(t),
         overlord: 2 * /\b(Overall Lvl|Racial Lvl|Job Lvl)\b/i.test(t) + /^Karma:/m.test(t) + /Super-Tier Slots:|Origin: (YGGDRASIL|New World)/i.test(t) + /Great Tomb of Nazarick|The New World \u2192/i.test(t),
@@ -9002,6 +8990,7 @@ function worldOf(lines) {
     };
     let best = null, top = 1;
     for (const [k, v] of Object.entries(s)) if (v > top) { best = k; top = v; }
+    if (cache && cache.size < 600) cache.set(t, best);
     return best;
 }
 
@@ -9878,8 +9867,6 @@ function stripCompanion(text) {
     return out.replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '');
 }
 
-
-
 function parseCompanion(text, roster = [], relSt = null, immSt = null) {
     const res = { characters: null, weather: null, you: null, party: null, fight: null, found: false };
     if (!text) return res;
@@ -9904,14 +9891,14 @@ function parseCompanion(text, roster = [], relSt = null, immSt = null) {
     if (isPlainObject(obj.you)) {
         const y = obj.you;
         const mind = typeof y.mind === 'string' ? y.mind.trim().toLowerCase() : '';
-        const sn = y.sanity === null || y.sanity === undefined || y.sanity === '' ? NaN : Number(y.sanity), xp = Number(y.xp);
+        const sn = reportNumber(y.sanity), xp = Number(y.xp);
         res.you = { slept: y.slept === true, ate: y.ate === true, drank: y.drank === true, rested: y.rested === true, mind: HMS_MIND_SCALE.includes(mind) ? mind : null,
             mood: partyText(y.mood, 40), stress: partyLevel(y.stress), sanity: Number.isFinite(sn) ? Math.max(0, Math.min(100, Math.round(sn))) : null,
             xp: Number.isFinite(xp) && xp > 0 ? Math.min(100000, Math.round(xp)) : 0, xpWhy: partyText(y.xpWhy, 100),
             spells: Array.isArray(y.spells) ? y.spells.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim().slice(0, 60)).slice(0, 8) : [],
             learned: Array.isArray(y.learned) ? y.learned.map(x => (typeof x === 'string' ? x : isPlainObject(x) ? x.name || x.spell : '')).filter(x => typeof x === 'string' && x.trim() && !/^(none|null|n\/a)$/i.test(x.trim())).map(x => x.trim().slice(0, 60)).slice(0, 6) : [],
             mastered: Array.isArray(y.mastered) ? y.mastered.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim().slice(0, 60)).slice(0, 6) : [],
-            study: Array.isArray(y.study) ? y.study.filter(x => isPlainObject(x) && typeof (x.spell || x.name) === 'string' && (x.spell || x.name).trim()).map(x => { const n = x.progress === null || x.progress === undefined || x.progress === '' ? NaN : Number(x.progress); return { spell: String(x.spell || x.name).trim().slice(0, 60), progress: Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null, note: partyText(x.note, 80) }; }).slice(0, 8) : [],
+            study: Array.isArray(y.study) ? y.study.filter(x => isPlainObject(x) && typeof (x.spell || x.name) === 'string' && (x.spell || x.name).trim()).map(x => { const n = reportNumber(x.progress); return { spell: String(x.spell || x.name).trim().slice(0, 60), progress: Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null, note: partyText(x.note, 80) }; }).slice(0, 8) : [],
             got: pocketList(y.got, true), lost: pocketList(y.lost) };
         res.found = true;
     }
@@ -9986,12 +9973,12 @@ function plotRequest(userName, mushoku = false) {
     const json = [], rules = [];
     if (c.plot) {
         json.push(`"plot": {"now": "where the main story stands, one line", "threads": [{"name": "a few words", "state": "open|advanced|resolved", "note": "one line"}]${mushoku ? ', "canonEvents": [{"name": "specific event", "state": "occurred|changed|prevented", "detail": "what the story established", "arc": "arc number or null"}]' : ''}}`);
-        rules.push('"plot" is the story itself, not a quest: "now" says where the main story stands at the end of this reply, and "threads" are its open questions and conflicts that matter, up to six. Mark a thread advanced when this reply moved it and resolved when it closed, and keep each thread\u2019s name the same from reply to reply.');
-        if (mushoku) rules.push('"plot.canonEvents" contains only Mushoku canon events explicitly shown to occur, change, or be prevented in this reply or the player\u2019s last message. [] if none. A date, worldbook entry, prediction, rumor, or the canonical Rudeus arc does not prove an event happened to the player. Name the actual event and record its observed outcome; never overwrite an established divergence with an unobserved canon outcome.');
+        rules.push('"plot": story state, not quests. now=end-of-reply situation; threads=up to six meaningful conflicts/questions, stable names. advanced=this reply moved it; resolved=closed.');
+        if (mushoku) rules.push('"plot.canonEvents": only canon events shown occurring, changing or being prevented in this reply/player action; [] otherwise. Dates, lore, forecasts, rumors and reference arcs prove no player outcome. Record observed outcomes, preserving established divergences.');
     }
     if (c.objectives) {
         json.push('"objectives": [{"text": "one line", "state": "active|done|failed|abandoned", "quest": "quest name or null"}]');
-        rules.push(`"objectives" are goals ${userName} has personally chosen or accepted, up to five, the nearest first. Another character proposing, ordering, or inviting ${userName} to do something does not make it ${userName}'s objective unless ${userName} agrees or acts on it; A player intention is not a completed act. Omit suggestions and unaccepted orders; mark abandoned when the player drops a goal, done only when achieved, failed when impossible. NPCs may still pursue their own goals.`);
+        rules.push(`"objectives": up to five personally chosen/accepted goals for ${userName}, nearest first. Another character proposing, ordering or inviting creates no player goal without agreement/action. Intentions are not completed acts. Omit unaccepted suggestions; abandoned=dropped, done=achieved, failed=impossible. NPCs retain their own goals.`);
     }
     return json.length ? { json: json.join(', '), rules: rules.join(' ') } : null;
 }
@@ -10233,7 +10220,7 @@ function buildCompanionInstructionRead(committed, userName, locks, st = null, ch
     if (fight) s += '\n' + fight.rules;
     if (posReq) s += '\n' + posReq.rules;
     if (wantSurvival) s += `\nIn "you", set a flag to true only if ${userName} actually did it in this reply's events: a proper sleep counts as slept; a short break or sitting down counts as rested; a real meal counts as ate. Set "mind" to ${userName}'s state of mind at the end of this reply, as one of the listed words.`;
-    if (yc.on) s += `\n"you": ${userName}'s established mood, ${wantSurvival ? '' : 'stress (L), '}sanity (100 steady, 0 broken)${askXp ? ', xp for real accomplishments (0 otherwise), with why' : ''}. "got"/"lost": completed physical transfers in the player's last action or this reply, excluding HUD-listed items and news. Offered or nearby items are not acquired. Unopened or wrapped gifts require established acceptance or transfer. A proposal, plan or reaching gesture is not a completed action; [] if unchanged.`;
+    if (yc.on) s += `\n"you": ${userName}'s established mood, ${wantSurvival ? '' : 'stress (L), '}sanity (100 steady, 0 broken)${askXp ? ', accomplishment xp (0 otherwise) and why' : ''}. got/lost: completed physical transfers in player actions/narration, excluding HUD-listed items and news. Offers, proposals and reaching are not transfers; unopened/wrapped gifts require acceptance or transfer. [] if unchanged.`;
     if (magicSeen && tlNow.length && worldOf(worldLines(tlNow[tlNow.length - 1].hud)) === 'mushoku') s += `\nIn "you.study", report only a named spell ${userName} intentionally practiced or was taught in the player's last message or this reply; [] if no practice occurred. A demonstration by someone else, a spell list, or a failed combat attempt is not study. Never invent a progress percentage. In "you.learned" report only spells demonstrably learned, not merely attempted.`;
     if (wantQuests) s += '\n"quests": established quests only, not routine scene details or unaccepted requests. Progress is an explicitly measured percentage or null; never estimate it from scene beats. Complete only after achievement.';
     if (plotReq) s += '\n' + plotReq.rules;
@@ -10651,7 +10638,12 @@ function hmsList(text) {
 }
 
 function hmsNorm(s) {
-    return String(s || '').replace(/^[^\p{L}\p{N}[]+/u, '').replace(/[:\s]+$/, '').trim().toLowerCase();
+    const text = String(s || '');
+    const cache = activeReadPass ? memoRead(activeReadPass.chat, 'normalizedLabels', () => new Map()) : null;
+    if (cache && cache.has(text)) return cache.get(text);
+    const result = text.replace(/^[^\p{L}\p{N}[]+/u, '').replace(/[:\s]+$/, '').trim().toLowerCase();
+    if (cache && cache.size < 512) cache.set(text, result);
+    return result;
 }
 
 /** Splits on a separator only where it sits outside (), [] and {}. */
@@ -10729,6 +10721,12 @@ function hmsMarkBlocks(lines) {
 
 /** In-world minutes from the HUD's own clock. Null when the HUD carries no time. */
 function hmsClock(hud) {
+    if (!activeReadPass || !hud) return hmsClockUncached(hud);
+    const clocks = memoRead(activeReadPass.chat, 'hudClocks', () => new WeakMap());
+    if (!clocks.has(hud)) clocks.set(hud, hmsClockUncached(hud));
+    return clocks.get(hud);
+}
+function hmsClockUncached(hud) {
     if (!hud) return null;
     const top = hud.lines.filter(l => !l.block).slice(0, 4).map(l => l.text).join(' | ');
     const tm = top.match(/\b(\d{1,2}):(\d{2})(?:\s*([AaPp])\.?[Mm]\.?)?/);
@@ -11111,6 +11109,15 @@ function hmsStateClass(state, states) {
 }
 
 function hmsReadQuests(hud, cfg) {
+    if (!activeReadPass || !hud) return hmsReadQuestsUncached(hud, cfg);
+    const cache = memoRead(activeReadPass.chat, 'questReads', () => new WeakMap());
+    const hit = cache.get(hud);
+    if (hit && hit.cfg === cfg) return hit.data;
+    const data = hmsReadQuestsUncached(hud, cfg);
+    cache.set(hud, { cfg, data });
+    return data;
+}
+function hmsReadQuestsUncached(hud, cfg) {
     const labels = hmsList(cfg.quests.labels);
     const states = hmsParseStates(cfg.quests.states);
     const quests = [];
@@ -11232,9 +11239,14 @@ const hmsSysTextCache = new Map();   // HUD text -> systems read from it (bounde
 function hmsReadSystems(hud, cfg) {
     if (!hud) return null;
     const c = cfg || hmsCfg();
+    const identity = hmsSysCache.get(hud);
+    if (identity && identity.ver === hmsCfgVer) return identity.sys;
     const textKey = hud.lines.map(l => l.text).join('\n');
-    const hit = hmsSysCache.get(hud) || hmsSysTextCache.get(textKey);
-    if (hit && hit.ver === hmsCfgVer) return hit.sys;
+    const hit = hmsSysTextCache.get(textKey);
+    if (hit && hit.ver === hmsCfgVer) {
+        hmsSysCache.set(hud, hit);
+        return hit.sys;
+    }
     const blocks = hmsMarkBlocks(hud.lines);
     const sys = {
         clock: hmsClock(hud),
@@ -11265,7 +11277,13 @@ function messageHud(m) {
     const key = `${m.id}:${m.swipe_id ?? 0}`;
     const hit = hmsParseCache.get(key);
     if (hit && hit.text === text) return hit.hud;
-    const hud = parseHud(text) || null;
+    const shared = activeReadPass ? memoRead(activeReadPass.chat, 'hudText', () => new Map()) : null;
+    let hud;
+    if (shared && shared.has(text)) hud = shared.get(text);
+    else {
+        hud = parseHud(text) || null;
+        if (shared && shared.size < 600) shared.set(text, hud);
+    }
     hmsParseCache.set(key, { text, hud });
     if (hmsParseCache.size > 3000) hmsParseCache.delete(hmsParseCache.keys().next().value);
     return hud;
@@ -11626,6 +11644,18 @@ const PARTY_PHRASES = {
 const PARTY_TEXT = { mood: 40, register: 60, band: 80, front: 40, stage: 80, phase: 80, jealousOf: 60, tell: 140, concern: 160 };
 const PARTY_MAX = 8;
 
+function reportNumber(value) {
+    if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return NaN;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : NaN;
+}
+
+function gearPendingState(value, includeUnequipped = false) {
+    const state = String(value ?? '');
+    return /\b(?:offered|presented|held out|proposed|planned|not (?:yet )?(?:taken|accepted))\b/i.test(state) ||
+        (includeUnequipped && /\bnot (?:yet )?(?:equipped|held|worn)\b/i.test(state));
+}
+
 function partyLevel(v) {
     if (v === null || v === undefined || v === false) return null;
     if (typeof v === 'number' && Number.isFinite(v)) return Math.max(0, Math.min(4, Math.round(v > 4 ? v / 25 : v)));
@@ -11653,7 +11683,7 @@ function partyRoster(st) {
     return (st && isPlainObject(st.party) && Array.isArray(st.party.members)) ? st.party.members : [];
 }
 
-/** Exact canonical names win; aliases and short names must identify only one member. */
+/** Finds the roster member a reported name refers to: exact, alias, or one name containing the other. */
 function partyMatch(roster, name) {
     const k = lockKey(name);
     if (!k || !Array.isArray(roster)) return null;
@@ -11995,10 +12025,10 @@ function relRequest(chat, userName, cfg, st = null, classic = false) {
     const barFmt = rc.bars.map(b => `"${b.id}": ${b.two ? '-100..100' : '0..100'}`).join(', ');
     const json = `"relations": [{"name": "exact name", "standing": "${rc.ladder.join('|')}", "bond": "kind of relationship, their entry's words", "minor": false, "mood": "1-3 words"${barFmt ? ', ' + barFmt + ', "reasons": {"bar": "why it moved"}' : ''}, "why": "what changed, or null"}]`;
     let rules = `In "relations", add one entry for every named character in this scene who dealt with ${userName}, never ${userName}. `;
-    rules += `"standing" is closeness and regard only — how near ${userName} they feel, from enmity to devotion. It is never romance: devotion can be a child's, a sworn companion's, a friend's. `;
-    rules += `"bond" is the kind of relationship, taken from their own character entry and any contract (friend, family — parent and child, mentor, contracted spirit, rival, romantic partner…). Romantic only when their entry or the story established it. `;
-    rules += `Set "minor" to true for anyone who is, or appears to be, under 18. A minor is never given a romantic bond, and their desire is always 0; the same holds for every family bond. `;
-    if (rc.bars.length) rules += `The numbers are how they feel toward ${userName}: ${rc.bars.filter(b => b.two).map(b => b.name).join(', ') || 'none'} run from -100 to 100 with 0 neutral; ${rc.bars.filter(b => !b.two).map(b => b.name).join(', ') || 'none'} run from 0 to 100. Move each by at most ${rc.maxStep} in a reply, and only for something that happened in it. A first meeting starts where their own character entry puts them; neutral only if it says nothing. Report what the story shows — this block never changes how you write anyone. `;
+    rules += `"standing": closeness/regard, never romance; devotion can be familial, friendly or sworn. `;
+    rules += `"bond": established relationship/contract in the character entry's words. Romance requires explicit establishment. `;
+    rules += `"minor": true if under 18 or apparently so. Minors and family never receive romance or desire. `;
+    if (rc.bars.length) rules += `Bars toward ${userName}: ${rc.bars.filter(b => b.two).map(b => b.name).join(', ') || 'none'} use -100..100 (0 neutral); ${rc.bars.filter(b => !b.two).map(b => b.name).join(', ') || 'none'} use 0..100. Event-supported movement only, at most ${rc.maxStep}/reply. Start from the character entry; neutral only if unspecified. Report, never direct narration. `;
     const prev = relPrevious(chat || [], st, rc);
     const pins = relPins(st);
     if (prev.length) rules += `\nPrevious standing — ${prev.map(r => `${r.name}: ${[r.standing, r.bond ? `bond ${r.bond}${pins[r.key] && pins[r.key].bond ? ' (set by the player)' : ''}` : null, r.minor ? 'minor' : null, ...rc.bars.filter(b => r[b.id] !== null && r[b.id] !== undefined).map(b => `${b.id} ${r[b.id]}`)].filter(Boolean).join(', ')}`).join('. ')}.`;
@@ -12019,8 +12049,7 @@ function relNormalize(list, cfg, st = null, classic = false) {
         const i = relRank(e.standing, rc);
         if (i !== null) r.standing = rc.ladder[i];
         for (const b of rc.bars) {
-            const raw = e[b.id];
-            const v = typeof raw === 'number' || (typeof raw === 'string' && raw.trim()) ? Number(raw) : NaN;
+            const v = reportNumber(e[b.id]);
             r[b.id] = Number.isFinite(v) ? Math.round(Math.max(b.two ? -100 : 0, Math.min(100, v))) : null;
         }
         if (isPlainObject(e.reasons)) for (const [k, v] of Object.entries(e.reasons)) {
@@ -12316,8 +12345,8 @@ function hmsFamilyPanel(chat, st, cfg) {
 function famRequest(chat, st, userName, cfg) {
     const fc = famCfg(cfg);
     if (!fc.on || !fc.ask) return null;
-    const json = `"family": [{"name": "exact name", "relation": "what they are to ${userName}: mother, younger sister…", "status": "${FAM_STATUS.join('|')}", "where": "where they are now, as precisely as the story says, or null", "known": "${FAM_KNOWN.join('|')}", "doing": "what they are doing or how they are, one line, or null"}]`;
-    let rules = `"family": ${userName}'s own family only — by blood, marriage or adoption (parents, siblings, children, spouse, grandparents, aunts, uncles, cousins, step- and foster family), never ${userName}. Enemies, rivals, mentors, masters, spirits, allies and anyone else who is not kin never go here, however much they matter; "relation" is always the family tie itself. One entry for each who appears in this reply, is spoken of, or whose whereabouts or condition the reply reveals; [] when none does. "known" is "seen" when they are in the scene with ${userName}, "told" when someone or something in the story says where they are, "guess" when it is only assumed. "where" and "status" change only when the story shows or tells it: never move, lose or kill anyone the story did not. Report what the story shows — this block never changes how you write anyone.`;
+    const json = `"family": [{"name": "exact name", "relation": "family tie", "status": "${FAM_STATUS.join('|')}", "where": "precise story location or null", "known": "${FAM_KNOWN.join('|')}", "doing": "observed activity/condition or null"}]`;
+    let rules = `"family": ${userName}'s blood/marital/adoptive/step/foster kin only, never self or unrelated allies, spirits, masters or rivals. Relation=actual kinship. Report kin appearing/mentioned/newly updated, [] otherwise. known=seen in scene/told by an in-world source/guess if assumed. Status/location changes require evidence; never invent death, movement or disappearance. Report, never direct narration.`;
     if (fc.tell && chat && st) {
         let known = [];
         try { known = famRead(chat, st).members; } catch { known = []; }
@@ -12420,7 +12449,7 @@ function gearCanon(key) {
 function gearState(v) {
     const s = String(v || '').toLowerCase().replace(/[_-]+/g, ' ').trim();
     if (!s) return null;
-    if (/\b(?:offered|presented|held out|proposed|planned|not (?:yet )?(?:taken|accepted|equipped|held|worn))\b/i.test(s)) return null;
+    if (gearPendingState(s, true)) return null;
     if (GEAR_STATES.includes(s)) return s;
     for (const [re, st] of GEAR_SYN) if (re.test(s)) return st;
     return null;
@@ -12432,7 +12461,7 @@ function gearNormalize(list) {
     const out = [];
     for (const e of list) {
         if (!isPlainObject(e) || e.accepted === false || reportSpeculative(e)) continue;
-        if (/\b(?:offered|presented|held out|proposed|planned|not (?:yet )?(?:taken|accepted))\b/i.test(String(e.state ?? e.status ?? e.how ?? ''))) continue;
+        if (gearPendingState(e.state ?? e.status ?? e.how)) continue;
         const name = gearBare(partyText(e.item ?? e.name ?? e.object, 60) || '');
         if (!name) continue;
         const key = lockKey(name);
@@ -12603,8 +12632,8 @@ function gearLine(it) {
 function gearRequest(chat, st, userName, cfg) {
     const gc = gearCfg(cfg);
     if (!gc.on || !gc.ask) return null;
-    const json = `"gear": [{"item": "short name", "state": "${GEAR_STATES.join('|')}", "where": "where exactly, a few words, or null", "inside": "the bag, pouch or pocket it is in, or null"}]`;
-    let rules = `"gear": established changes in how ${userName} carries possessions, from accepted player actions or narrated events. "in hand": held; "worn": clothing or armour; "sheathed": sheath or holster; "on body": slung or strapped, with "where"; "in container": name it in "inside"; "stowed": stored off-person; "dropped": set down; "gone": transferred away, consumed, lost or destroyed. Storage and unequipping preserve ownership. Offers, nearby items, NPC possessions and planned actions confer no possession. An unopened gift needs an actual accepted transfer. Don't assume narrator-assigned player decisions were authorized; report what is established, without inventing consent or undoing explicit physical facts. Keep HUD/Gear-now item names, report only changed items, [] otherwise. Damage alone never removes an item; HUD ownership stays authoritative.`;
+    const json = `"gear": [{"item": "short name", "state": "${GEAR_STATES.join('|')}", "where": "location or null", "inside": "container or null"}]`;
+    let rules = `"gear": changed possession states from established player actions/narration. in hand=held; worn=clothing/armour; sheathed=sheath/holster; on body=slung/strapped with where; in container=inside names it; stowed=off-person storage; dropped=set down; gone=transferred away, consumed/lost/destroyed. Storage/unequipping retain ownership. Nearby/NPC-owned/offered items and plans confer none. Unopened gifts need accepted transfer. Do not infer consent from narrator-assigned decisions or undo explicit physical facts. Reuse HUD/Gear-now names. [] if unchanged; damage alone never removes gear. HUD ownership is authoritative.`;
     if (gc.tell && chat && st) {
         let now = [];
         try { now = gearRead(chat, st).items.filter(it => it.state && it.state !== 'gone'); } catch { now = []; }
@@ -13916,6 +13945,7 @@ function simKeyer(roster, you) {
     const fn = (name) => {
         let k = lockKey(String(name ?? '').replace(/\s+/g, ' '));
         if (!k) return null;
+        if (known.has(k)) return k;
         const member = partyMatch(roster, name);
         if (member) k = lockKey(member.key || member.name);
         else if (you.has(k)) return SIM_YOU;
@@ -14441,18 +14471,18 @@ function simRequest(fold, userName, skip = new Set()) {
     const u = userName || 'the player';
     if (sc.on) {
         json.push(`"minds": [{"name": "…", "feel": "primary>secondary>tertiary", "level": "low|med|high", "at": "who it is aimed at", "tfdy": "T+1 D-1, or empty", "iw": 2, "facet": "the facet leading now", "mask": "held|cracking|off", "toward": [{"name": "you${sc.pairs === 'all' ? ', or someone present' : ''}", "moves": "philia+1 misos-1, or empty", "why": "what moved them", "gate": "up|down|same", "E": "open|sealed", "L": "open|sealed", "filters": "soc crack, val strain, or empty", "debt": "a wrong not made good, or null", "paid": false, "intent": "what they want from them", "mode": "${SIM_MODES.join('|')}"}]}]`);
-        let r = `"minds" (FrankenSIM's Aether): one entry per named character present, never ${u}, for what goes on inside them by the end of this reply. Use established traits, observable behavior, dialogue and explicit private information; mark uncertainty by omitting unsupported changes. Teasing, disagreement or competition alone proves no envy, hostility or loss of trust. Never invent motives or an imagined off-screen event. "feel" is their emotion named by where it leads, as a Parrott path (love|joy|surprise|anger|sadness|fear > secondary > tertiary); "at" is who it is aimed at. "tfdy": only what this reply changed in their ambient feeling, T tenderness, F fury, D dread, Y yearning, each by 1 at most, and only for something that happened. "iw": how warm they show themselves (0 frostbound, 1 cool, 2 temperate, 3 warm, 4 fervent); 2 unless there is a reason. "facet": the side of them that leads right now; "mask": whether the face they wear holds.`;
-        r += ` "toward": how they feel about ${u} ("you")${sc.pairs === 'all' ? ' and about anyone else present they deal with' : ''}. "moves": only the feelings this reply moved, each by ${sc.maxStep} at most: eros desire, ludus play, philia friendship, pragma partnership and reliance, storge belonging, agape selfless care, misos hate, eris strife, echthros enmity, stasis stuck and resisting, adiaphora indifference, phthonos envy. "gate" (dormant, attentive, aware, longing, open) moves one step at most, for an event, never for pressure. "E" and "L": whether the feeling shows in what they do and in what they say. "filters" hold the feeling back, soc (what others would think), val (their own values), comp (whether they fit), rel (ties they already have): "crack" loosens one, "strain" tightens it. "debt": a wrong done to them and not made good; it stays until "paid": true.`;
+        let r = `"minds": named people present, never ${u}. Use established traits, behavior, dialogue or explicit private information. Teasing/competition alone proves no envy, hostility or trust loss; omit uncertainty, invented motives and an imagined off-screen event. "feel": Parrott primary>secondary>tertiary (love|joy|surprise|anger|sadness|fear); "at": target. "tfdy": observed changes only, T tenderness/F fury/D dread/Y yearning, each ±1. "iw": visible warmth 0 frostbound, 1 cool, 2 temperate, 3 warm, 4 fervent; default 2. "facet": leading side; "mask": whether the facade holds.`;
+        r += ` "toward": feelings about ${u}${sc.pairs === 'all' ? ' or present interaction partners' : ''}. "moves": event-supported changes, at most ${sc.maxStep}: eros desire, ludus play, philia friendship, pragma reliance, storge belonging, agape care, misos hate, eris strife, echthros enmity, stasis resistance, adiaphora indifference, phthonos envy. "gate": dormant/attentive/aware/longing/open, one step per earned event, never pressure. E/L: whether action/speech reveals feeling. Filters soc social/val values/comp compatibility/rel existing ties: crack loosens, strain tightens. Debt persists until paid.`;
         r += ` Someone the minds state does not list yet also gets "temperament" (sanguine|choleric|melancholic|phlegmatic) and "facets" (5-7 words), from their card; a pair it does not list gets "start": all twelve feelings, 3-20, as their card and history put them. A minor, or family, never gets eros or a romantic mode.`;
         rules.push(r);
     }
     if (sc.agendas) {
         json.push('"agendas": [{"name": "…", "where": "place", "doing": "what", "why": "why", "until": "HH:MM, or the event that ends it", "next": "what they mean to do after, or null"}]');
-        rules.push(`"agendas": what named characters who matter now are doing, here or elsewhere: the people present say what they were doing before this scene and whether they still mean to go back to it; report absent characters only when their activity is established by narration or a received report, never by imagining what they must be doing. Nobody jumps between places: to get somewhere they travel, and the HUD clock has to allow it. Only who changed or is new, up to 8; [] when nothing changed.`);
+        rules.push(`"agendas": changed/new activities of relevant named people, up to 8, [] otherwise. Present people may retain their established prior plans. Absent activities require narration or a received report, never imagination. Movement requires travel and sufficient HUD time.`);
     }
     if (sc.knowledge) {
         json.push('"learned": [{"who": "…", "fact": "one line", "how": "saw|heard|told|evidence|message|common|gossip|guessed", "from": "who told them, or null", "sure": "certain|partly|unsure|wrong"}]');
-        rules.push(`"learned": what a named character newly found out in this reply that matters (about ${u}, a secret, an event) and how it reached them. Nobody knows what never reached them: no sight, word, evidence or message, no knowledge. Private thoughts, narrator knowledge, another mind entry and a shared location are not information transfer. A guess remains unsure and gossip remains unverified; never upgrade them to certain. "wrong" is a false belief they now hold. [] when nobody learned anything new.`);
+        rules.push(`"learned": significant new knowledge about ${u}, others or events, with its actual route: sight, speech, evidence or message. Private thoughts, narrator knowledge, another mind and colocation are not information transfer. Guesses stay unsure; gossip unverified; wrong denotes a false belief. [] if none.`);
     }
     if (sc.chekhov) {
         json.push('"chekhov": {"load": [{"what": "a detail this reply planted that should pay off later", "w": 1, "lock": "null, or T:HH:MM, C:name, D:id, K:condition"}], "fired": ["ids paid off in this reply"], "drop": ["ids that no longer fit"]}');
@@ -15169,7 +15199,7 @@ function spellEstablishedNames(message, playerName) {
     const names = /\bknown spells\b|\bspells you (?:already )?know\b|\byou (?:already )?know (?:these|the following) spells\b/i.test(text)
         ? spellEstablishedList(stripCompanion(stripLeakedReasoning(text)), playerName) : [];
     spellEstablishedCache.set(key, { text, names });
-    while (spellEstablishedCache.size > 600) spellEstablishedCache.delete(spellEstablishedCache.keys().next().value);
+    while (spellEstablishedCache.size > 3000) spellEstablishedCache.delete(spellEstablishedCache.keys().next().value);
     return names;
 }
 
@@ -15435,8 +15465,7 @@ function questNormalize(list) {
         if (!isPlainObject(q) || typeof q.name !== 'string' || !q.name.trim() || q.accepted === false || reportSpeculative(q)) continue;
         if (/^(?:suggested|proposed|offered|unaccepted|intended)$/.test(String(q.state || '').toLowerCase())) continue;
         const cat = String(q.category || '').toLowerCase();
-        const raw = q.progress;
-        const pr = typeof raw === 'number' || (typeof raw === 'string' && raw.trim()) ? Number(raw) : NaN;
+        const pr = reportNumber(q.progress);
         out.push({ key: lockKey(q.name), name: q.name.trim().slice(0, 80), objective: partyText(q.objective, 160), progress: Number.isFinite(pr) ? Math.max(0, Math.min(100, Math.round(pr))) : null,
             giver: partyText(q.giver, 60), where: partyText(q.where, 80), deadline: partyText(q.deadline, 60), reward: partyText(q.reward, 100),
             category: ['main', 'side', 'personal', 'party'].includes(cat) ? cat : null });
@@ -15513,7 +15542,7 @@ async function hmsDiagnostics(chatId, includeReply) {
     const chat = chatId ? await chatApi.getMessages(chatId) : [];
     const hms = chatId ? isHmsChat(chatId, null, chat) : false;
     const hudMsg = [...chat].reverse().find(m => m.role === 'assistant');
-    const hud = hudMsg ? messageHud(hudMsg) : null;
+    const hud = hudMsg ? parseHud(textOf(hudMsg.content)) : null;
     const trim = (v) => typeof v === 'string' ? (v.length > 160 ? `(${v.length} chars)` : v) : v;
     const slim = JSON.parse(JSON.stringify(settings, (k, v) => (/^custom.*Prompt$/.test(k) && typeof v === 'string' ? `(custom, ${v.length} chars)` : k === 'npcAvatars' ? '(portraits)' : trim(v))));
     return {
@@ -16803,4 +16832,3 @@ spindle.onFrontendMessage(async (payload, userId) => {
     });
     spindle.log.info('[RPG Companion HMS] Backend loaded.');
 })();
-

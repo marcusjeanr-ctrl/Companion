@@ -68,3 +68,4 @@ async function main() {
     console.log(`Atlas reference tests passed: ${nodes.length} mapped nodes, full-book pagination, explicit parents, descriptions, no organization/weather nodes, temporal filtering, prevented/changed outcomes, swipes, cache reuse and world isolation.`);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
+

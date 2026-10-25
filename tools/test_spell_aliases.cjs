@@ -66,3 +66,4 @@ async function main() {
     console.log('Spell aliases passed: canonical names, no duplicate Other rows, study/progress/mastery, forget/relearn/swipes, manual controls, ambiguous keywords and catalog isolation.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
+

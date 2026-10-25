@@ -6,6 +6,7 @@ const src = fs.readFileSync(path.join(__dirname, '../dist/backend.js'), 'utf8');
 const arcEntries = JSON.parse(fs.readFileSync(path.join(__dirname, 'six_sided_arc_fixture.json')));
 function section(from, to) { const a = src.indexOf(from), b = src.indexOf(to, a + from.length); assert(a >= 0 && b > a, from); return src.slice(a, b); }
 const code = [
+ section('function reportNumber(value)', 'function partyLevel(v)'),
  section('function reportSpeculative(row)', 'function simLearnedNormalize(list)'),
  section('function pocketAcquisitionPending(value)', '/**\n * What the player carries'),
  section('function hmsSplitTop(str, sepRe)', 'function hmsNum(s)'),

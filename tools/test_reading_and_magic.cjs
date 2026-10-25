@@ -62,3 +62,4 @@ async function main() {
     console.log('Reading and Magic regressions passed: one original tracker call, no quote gate/correction, local rereads, 1,432-entry pagination, complete spell schools, cache reuse and world isolation.');
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});
+

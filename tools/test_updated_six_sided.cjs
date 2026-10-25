@@ -218,3 +218,4 @@ test('actual transport receives purpose scope and keeps schema last; story/help/
 });
 
 (async()=>{let failed=0;for(const {name,run} of cases){try{await run();console.log('PASS '+name);}catch(e){failed++;console.error('FAIL '+name+': '+e.stack);}}console.log(`Updated Six-Sided: ${cases.length-failed}/${cases.length} groups passed.`);if(failed)process.exitCode=1;})().catch(e=>{console.error(e);process.exitCode=1;});
+

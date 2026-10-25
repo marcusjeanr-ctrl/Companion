@@ -2574,7 +2574,6 @@
  "spell: Known": "Biliniyor",
  "spell: Studying": "Çalışılıyor",
  "spell: Within reach": "Erişilebilir",
- "spell: Rank unknown": "Rütbe bilinmiyor",
  "spell: In the lorebook": "Lorebook'ta",
  "spell: Next rank": "Sonraki rütbe",
  "spell: Locked": "Kilitli",
@@ -2587,7 +2586,6 @@
  "{0} known": "{0} biliniyor",
  "{0} studying": "{0} çalışılıyor",
  "{0} within reach": "{0} erişilebilir",
- "{0} rank unknown": "{0} rütbesi bilinmiyor",
  "{0} next": "{0} sıradaki",
  "Not learned after all: take it off": "Aslında öğrenilmedi: kaldır",
  "Study it: the story is reminded, and reports how it goes": "Çalış: hikâyeye hatırlatılır ve nasıl gittiğini bildirir",
@@ -2614,5 +2612,7 @@
  "1 year to Arc {0}": "Arc {0}'e 1 yıl",
  "Arc {0} begins this year": "Arc {0} bu yıl başlıyor",
  "the last arc": "son arc",
- "All {0} arcs": "{0} arc'ın tümü"
+ "All {0} arcs": "{0} arc'ın tümü",
+ "spell: Rank unknown": "Rütbe bilinmiyor",
+ "{0} rank unknown": "{0} rütbesi bilinmiyor"
 }

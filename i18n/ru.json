@@ -2574,7 +2574,6 @@
  "spell: Known": "Известно",
  "spell: Studying": "Изучается",
  "spell: Within reach": "Доступно",
- "spell: Rank unknown": "Ранг неизвестен",
  "spell: In the lorebook": "В лорбуке",
  "spell: Next rank": "Следующий ранг",
  "spell: Locked": "Закрыто",
@@ -2587,7 +2586,6 @@
  "{0} known": "известно: {0}",
  "{0} studying": "изучается: {0}",
  "{0} within reach": "доступно: {0}",
- "{0} rank unknown": "ранг неизвестен: {0}",
  "{0} next": "следующих: {0}",
  "Not learned after all: take it off": "Всё-таки не выучено: убрать",
  "Study it: the story is reminded, and reports how it goes": "Изучать: история получает напоминание и сообщает, как идёт дело",
@@ -2614,5 +2612,7 @@
  "1 year to Arc {0}": "1 год до арки {0}",
  "Arc {0} begins this year": "арка {0} начинается в этом году",
  "the last arc": "последняя арка",
- "All {0} arcs": "Все арки ({0})"
+ "All {0} arcs": "Все арки ({0})",
+ "spell: Rank unknown": "Ранг неизвестен",
+ "{0} rank unknown": "ранг неизвестен: {0}"
 }

@@ -337,3 +337,4 @@ test('HUD validation: missing data stays absent and same-length edits refresh th
     console.log(`Universal integrity: ${cases.length - failures.length}/${cases.length} groups passed.`);
     if (failures.length) process.exitCode = 1;
 })().catch(error => { console.error(error); process.exitCode = 1; });
+

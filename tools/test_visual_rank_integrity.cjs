@@ -91,3 +91,4 @@ assert.equal(water().status, 'reach');
 rt.messages[1].swipe_id = 0;
 assert.equal(water().status, 'mastered');
 console.log('Visual rank integrity passed: exact reported HUD, three magic schools, sword aliases/separators, Shown/True, unknown ranks, one Touki, 111 catalog entries, eligibility without grants, study/known/mastery/forget/relearn/swipe rollback.');
+
