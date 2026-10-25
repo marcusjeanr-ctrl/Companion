@@ -1,4 +1,4 @@
-# Mushoku compatibility in HMS 2.8.13 candidate
+# Mushoku compatibility in HMS 2.8.14 candidate
 
 Install the extension ZIP in Lumiverse. The original cards remain readable. A separate Six_Sided_World_HMS_Compatible.json copy resolves conflicting generic-HUD and output-order instructions in the supplied Six-Sided card; its lorebook is unchanged. Living World, the start handler and Reporter preset are unchanged. HMS reads the active chat's WORLD STATE HUD and the attached lorebook; it does not have an independent authoritative world state.
 
@@ -59,3 +59,7 @@ Run all five suites: `test_six_sided_compat.cjs`, `test_panel_tracking.cjs`, `te
 ## 2.8.13 Atlas prose references
 
 Atlas uses the complete reference catalog for Mushoku, rather than the activated subset. It reads Six-Sided entries categorized as geography/locations/landmarks/nations whose first sentence describes a place. It excludes organizations and weather, preserves summaries, and links only explicitly stated parents; unresolved places remain separate roots. This is a lorebook reference map plus observed HUD paths, not a visited-place or player-knowledge ledger. Run `node tools/test_atlas_references.cjs` for the supplied card geography fixture, eight-page hydration, duplicate handling, cache retention and world isolation.
+
+## 2.8.14 Calamity timeline filtering
+
+The supplied card mixes intact locations with post-Calamity variants. Atlas now filters the three explicit Calamity ruin entries and future destruction sentences using the current HUD and active-swipe event ledger. K417 Month 2/countdowns keep the intact references; a later date alone does not activate ruins. An occurred report or an explicit completed event in the HUD establishes the aftermath. Prevented or changed events do not force canonical destruction. The frontend version changes with the outcome and history cannot repopulate incompatible settlement states. This targets the supplied Calamity variants; it is not a general semantic timeline interpreter for every historical sentence in arbitrary lorebooks.

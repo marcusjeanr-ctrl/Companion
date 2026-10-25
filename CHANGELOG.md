@@ -1,3 +1,10 @@
+## 2.8.14 — prevent premature Calamity ruins in Atlas
+
+- Pass the current HUD and active-swipe canon-event ledger into Atlas. Hide Roa Ruins, Buena Village Ruins and Fittoa Crater until the Calamity is established as having occurred; dates alone never establish it. Preserve prevented/changed outcomes.
+- Remove future Calamity destruction sentences from intact Fittoa/Roa/Buena location summaries. Once occurrence is confirmed, show ruin references and suppress duplicate intact settlement references.
+- Include the temporal state in the Atlas cache/version so the frontend reloads the map when an outcome changes. Prevent HUD-history fallback from reintroducing incompatible settlement states; current directly observed HUD paths remain representable.
+- Add regression coverage for the reported K417 Month 2 countdown, later unconfirmed dates, occurrence, prevention, changed outcomes, discarded swipes and history fallback. Preserve tracker transport and add no model calls.
+
 ## 2.8.13 — read Six-Sided prose geography in Atlas
 
 - Build Mushoku Atlas references from the complete attached-book catalog, retaining them under partial activation and invalidating when the source books change.

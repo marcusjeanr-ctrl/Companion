@@ -2297,7 +2297,7 @@ async function pushState(chatId, snapshot = null) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.13-rc.1';
+const RPGC_VERSION = '2.8.14-rc.1';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -3898,6 +3898,35 @@ function atlasAddMushokuPath(atlas, segments, worldId = 'mushoku') {
     return changed;
 }
 
+const ATLAS_CALAMITY_RUINS = /^(?:Roa Ruins|Buena Village Ruins|Fittoa Crater)$/i;
+const ATLAS_CALAMITY_INTACT = /^(?:Roa|City of Roa|Buena Village|Buena Village Layout)$/i;
+function atlasCalamityState(hud, chat) {
+    const events = Array.isArray(chat) ? mtEventLedger(chat).filter(e => /mana calamity|teleportation incident|fittoa (?:calamity|disaster)/i.test(e.name)) : [];
+    const last = events[events.length - 1];
+    if (last?.state === 'prevented') return 'prevented';
+    if (last?.state === 'changed') return 'unknown';
+    if (last?.state === 'occurred') return 'after';
+    const lines = worldLines(hud);
+    const event = lines.filter(line => /mana calamity|teleportation incident/i.test(line)).join('\n');
+    if (/\b(?:in\s+\d+\s+(?:months?|days?|years?)|not yet|has not|upcoming|countdown|eve of)\b/i.test(event)) return 'before';
+    if (/\b(?:has occurred|has happened|has struck|occurred|already happened|completed)\b/i.test(event)) return 'after';
+    const date = mtCalendar(lines.join('\n'));
+    return date && (date.year < 417 || date.year === 417 && date.month && date.month < 5) ? 'before' : 'unknown';
+}
+function atlasMushokuTemporalEntries(entries, phase) {
+    return (entries || []).flatMap(entry => {
+        const match = String(entry.content || '').match(/^\s*([^:\n\[\]]{2,80}):\s*/);
+        if (!match) return [entry];
+        const name = match[1].replace(/^the\s+/i, '').trim();
+        if (ATLAS_CALAMITY_RUINS.test(name) && phase !== 'after') return [];
+        if (ATLAS_CALAMITY_INTACT.test(name) && phase === 'after') return [];
+        if (phase === 'after' || !/^(?:Fittoa Region|Roa|City of Roa|Buena Village|Buena Village Layout)$/i.test(name)) return [entry];
+        const body = String(entry.content).slice(match[0].length).split(/(?<=[.!?])\s+/).filter(sentence => !/\b(?:calamity|K\.?417|wiped|erased|annihilated|atomized)\b/i.test(sentence)).join(' ')
+            .replace(/\bIt was the breadbasket\b/, 'It is the breadbasket');
+        return [{ ...entry, content: `${match[1]}: ${body}` }];
+    });
+}
+
 function atlasMushokuReferences(entries) {
     const places = new Map();
     const title = value => String(value).replace(/^the\s+|^city of\s+/i, '').replace(/\s+city$/i, '').trim();
@@ -3958,26 +3987,29 @@ function atlasMushokuReferences(entries) {
     return out;
 }
 
-function atlasFor(chatId, segments = null, worldId = 'mushoku') {
+function atlasFor(chatId, segments = null, worldId = 'mushoku', context = null) {
     if (worldId === 'mushoku') loreQueueCatalog(chatId);
     const p = worldId === 'mushoku' ? loreCatalogPool(chatId) : lorePool.get(chatId);
     const entries = p && Array.isArray(p.entries) ? p.entries : [];
     const c = atlasCache.get(chatId);
-    if (c && c.pool === p && c.worldId === worldId && (c.atlas || !segments)) {
+    const temporal = worldId === 'mushoku' ? (context ? atlasCalamityState(context.hud, context.chat) : c?.temporal || 'unknown') : null;
+    if (c && c.pool === p && c.worldId === worldId && c.temporal === temporal && (c.atlas || !segments)) {
         if (segments) atlasAddMushokuPath(c.atlas, segments, worldId);
         return c.atlas;
     }
+    const currentEntries = worldId === 'mushoku' ? atlasMushokuTemporalEntries(entries, temporal) : entries;
     let atlas = null;
-    try { if (entries.length) atlas = atlasBuild(worldId === 'mushoku' ? entries.concat(atlasMushokuReferences(entries)) : entries); } catch (e) { logW(`[RPG Companion HMS] Could not read the location book: ${e?.message || e}`); }
+    try { if (entries.length) atlas = atlasBuild(worldId === 'mushoku' ? currentEntries.concat(atlasMushokuReferences(currentEntries)) : entries); } catch (e) { logW(`[RPG Companion HMS] Could not read the location book: ${e?.message || e}`); }
     if (!atlas && segments) atlas = { nodes: new Map(), roots: [] };
     if (atlas) {
-        atlas.baseVersion = `${p?.at ?? 'hud'}-${atlas.nodes.size}`;
+        atlas.temporal = temporal;
+        atlas.baseVersion = `${p?.at ?? 'hud'}-${temporal || 'reference'}-${atlas.nodes.size}`;
         atlas.version = atlas.baseVersion;
         atlas.ix = new Map([...atlas.nodes.keys()].map((id, i) => [id, i]));      // short ids for the panel
         if (segments) atlasAddMushokuPath(atlas, segments, worldId);
         if (!atlas.nodes.size) atlas = null;
     }
-    atlasCache.set(chatId, { pool: p, worldId, atlas });
+    atlasCache.set(chatId, { pool: p, worldId, temporal, atlas });
     while (atlasCache.size > LORE_POOL_MAX_CHATS) atlasCache.delete(atlasCache.keys().next().value);
     return atlas;
 }
@@ -4022,6 +4054,9 @@ function atlasObserveHistory(atlas, chat) {
     for (const m of relReadings(chat).slice(-100)) {
         const hud = messageHud(m);
         if (!hud || !hud.location || worldOf(worldLines(hud)) !== 'mushoku') continue;
+        const affected = mushokuLocationSegments(hud.location);
+        if (atlas.temporal !== 'after' && affected.some(name => ATLAS_CALAMITY_RUINS.test(name))) continue;
+        if (atlas.temporal === 'after' && affected.some(name => ATLAS_CALAMITY_INTACT.test(name))) continue;
         const key = JSON.stringify(hud.location);
         if (seen.has(key)) continue;
         atlasAddMushokuPath(atlas, hud.location, worldOf(worldLines(hud)));
@@ -4029,7 +4064,7 @@ function atlasObserveHistory(atlas, chat) {
     }
 }
 function atlasHereInfo(chatId, hud, chat = null) {
-    const atlas = atlasFor(chatId, hud && hud.location, worldOf(worldLines(hud)));
+    const atlas = atlasFor(chatId, hud && hud.location, worldOf(worldLines(hud)), { hud, chat });
     if (!atlas) return null;
     atlasObserveHistory(atlas, chat);
     const here = hud && hud.location ? atlasLocate(atlas, hud.location) : null;
@@ -15873,10 +15908,10 @@ spindle.onFrontendMessage(async (payload, userId) => {
                 const chat = await chatApi.getMessages(payload.chatId);
                 const m = latestHudMessage(chat);
                 const hud = m ? parseHud(textOf(m.content)) : null;
-                let atlas = atlasFor(payload.chatId, hud && hud.location, worldOf(worldLines(hud)));
+                let atlas = atlasFor(payload.chatId, hud && hud.location, worldOf(worldLines(hud)), { hud, chat });
                 if (!lorePool.has(payload.chatId)) {
                     await loreBuildPoolFromApi(payload.chatId);
-                    atlas = atlasFor(payload.chatId, hud && hud.location, worldOf(worldLines(hud)));
+                    atlas = atlasFor(payload.chatId, hud && hud.location, worldOf(worldLines(hud)), { hud, chat });
                 }
                 atlasObserveHistory(atlas, chat);
                 if (!atlas) { toFrontend({ type: 'atlas', chatId: payload.chatId, atlas: null }); break; }
