@@ -2217,7 +2217,7 @@ async function pushState(chatId) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.4-rc.1';
+const RPGC_VERSION = '2.8.5-rc.1';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -14491,7 +14491,7 @@ function spellKnown(chat, st, fold) {
     return out;
 }
 
-const SPELL_STATUS_ORDER = { mastered: 0, known: 1, study: 2, reach: 3, open: 4, next: 5, special: 6, locked: 7 };
+const SPELL_STATUS_ORDER = { mastered: 0, known: 1, study: 2, reach: 3, next: 4, unranked: 5, open: 6, special: 7, locked: 8 };
 
 /** The spell list for the Magic card: each spell with where it stands for you. Null when the lorebook has none. */
 function spellListPanel(chatId, chat, st, sys) {
@@ -14527,7 +14527,7 @@ function spellListPanel(chatId, chat, st, sys) {
             why = r.needs.length ? `Needs ${r.needs.join(' + ')}${miss.length && stand.schools.size ? ` (missing ${miss.join(', ')})` : ''}` : 'A melded spell';
         } else if (!stand.schools.size) status = 'open';
         else if (!sch) { status = 'locked'; why = stand.ladder === 'rz' ? 'Not your element' : 'Not one of your schools'; }
-        else if (r.step === null || sch.step === null) { status = 'reach'; why = 'No rank given — the story decides'; }
+        else if (r.step === null || sch.step === null) { status = 'unranked'; why = r.step === null ? 'No spell rank given — the story decides' : 'Your school rank is unknown — the story decides'; }
         else if (r.step <= sch.step) status = 'reach';
         else if (r.step === sch.step + 1) { status = 'next'; why = needs(r); }
         else { status = 'locked'; why = needs(r); }
@@ -14545,7 +14545,7 @@ function spellListPanel(chatId, chat, st, sys) {
         const mine = has(g.name);
         g.spells.sort((a, b) => (a.step === null) - (b.step === null) || (a.step || 0) - (b.step || 0) || SPELL_STATUS_ORDER[a.status] - SPELL_STATUS_ORDER[b.status] || a.name.localeCompare(b.name));
         const n = (st0) => g.spells.filter(s => s.status === st0).length;
-        return { key: g.key, name: g.name, mine: !!mine, rank: mine ? mine.rank : null, step: mine ? mine.step : null, odd: g.spells.every(s => s.status === 'special'), known: n('known') + n('mastered'), reach: n('reach') + n('open'), next: n('next'), study: n('study'), total: g.spells.length, spells: g.spells };
+        return { key: g.key, name: g.name, mine: !!mine, rank: mine ? mine.rank : null, step: mine ? mine.step : null, odd: g.spells.every(s => s.status === 'special'), known: n('known') + n('mastered'), reach: n('reach') + n('open'), next: n('next'), unranked: n('unranked'), study: n('study'), total: g.spells.length, spells: g.spells };
     }).sort((a, b) => (b.mine - a.mine) || ((b.step ?? -1) - (a.step ?? -1)) || (b.known - a.known) || (a.odd - b.odd) || (SPELL_ELEMENTS.test(b.key) - SPELL_ELEMENTS.test(a.key)) || (/^(unique|other|melded)$/i.test(a.name) - /^(unique|other|melded)$/i.test(b.name)) || a.name.localeCompare(b.name));
     // a school whose rank went up in the last few HUDs: what that opened
     const news = [];

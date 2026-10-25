@@ -13,7 +13,8 @@ const code = [
  section('/** In-world minutes from the HUD', 'function hmsSpan('),
  section('const ATLAS_TIER_RE =', '// ───────────────────────────── Positions and the room map'),
  section('function spellStanding(lines)', '/** What the story reports'),
- section('function spellStoryFold(chat)', '/** The spell list for the Magic card'),
+ section('function spellStoryFold(chat)', 'const SPELL_STATUS_ORDER ='),
+ section('const SPELL_STATUS_ORDER =', '/** The spells being studied'),
  section('function plotCfg()', 'function objectivesNormalize(list)'),
  section('const AGENDA_KINDS =', 'function agendaNormalize(list)'),
  section('function agendaNormalize(list)', 'function agendaRequest('),
@@ -50,6 +51,9 @@ const code = [
  'function logW() {}',
  'const FAM_STATUS = ["alive","missing","dead","unknown"], FAM_KNOWN = ["seen","told","guess"];',
  'const SPELL_ELEMENTS = /water|earth|fire|wind/i;',
+ 'const SPELL_LADDER = {mt:["Beginner","Intermediate","Advanced"]};',
+ 'const spellRows = [{name:"Earth Wall",key:"earth wall",school:"Earth",parent:null,ladder:"mt",step:null,rank:null,kind:"normal",effect:"An earthen wall.",chant:null,fan:false},{name:"Earth Spear",key:"earth spear",school:"Earth",parent:null,ladder:"mt",step:1,rank:"Intermediate",kind:"normal",effect:null,chant:null,fan:false}];',
+ 'function spellCatalog() { return spellRows; }',
  'const entries = [];',
  'function hmsClockTest(h) { return hmsClock(h); }',
 ].join('\n');
@@ -90,6 +94,10 @@ assert.equal(standaloneBirth.birth,404);
 assert.equal(standaloneBirth.birthMonth,2);
 assert.equal(ctx.spellStanding(h6.lines).voiceless,true); assert.equal(ctx.spellStanding(h6.lines).schools.get('water').step,1);
 assert.equal(ctx.spellStanding(hl.lines).schools.get('water').step,1);
+const rankPanel=ctx.spellListPanel('test',[],{}, {_lines:h6.lines});
+assert.equal(rankPanel.schools.find(s=>s.name==='Earth').spells.find(s=>s.name==='Earth Wall').status,'unranked');
+assert.equal(rankPanel.schools.find(s=>s.name==='Earth').reach,1);
+assert.equal(rankPanel.schools.find(s=>s.name==='Earth').unranked,1);
 assert.equal(w6.saga.participation,'personal'); assert.equal(w6.saga.personalArc,'Sandbox');
 assert.equal(wl.saga.participation,'explicit');
 assert.equal(ctx.hmsClockTest(h6).dated,true);
@@ -145,4 +153,4 @@ assert(!ctx.plotRequest('Marcus',false).json.includes('canonEvents'));
 evalExpr('entries').push(...arcEntries);
 assert.equal(ctx.mtArcList('test').length,22);
 assert.equal(ctx.mtArcList('test').find(x=>x.no===3).year,417);
-console.log('Compatibility assertions passed: both HUDs, 30-day calendar, Atlas, spells, family, saga ledger, objectives, gear, and 22 lorebook arcs.');
+console.log('Compatibility assertions passed: both HUDs, 30-day calendar, Atlas, unranked spells, family, saga ledger, objectives, gear, and 22 lorebook arcs.');

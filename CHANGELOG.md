@@ -1,3 +1,9 @@
+## 2.8.5 compatibility candidate — unranked spell accuracy
+
+- Show spells with no stated lorebook rank as Rank unknown instead of Within reach.
+- Exclude unranked spells from Usable and next while keeping them under All; no learning state is granted.
+- Translate the new status in the existing supported languages.
+
 ## 2.8.4 compatibility candidate — stability fixes
 
 - Anchor yearless Agenda deadlines to the active Mushoku calendar; prevent huge false overdue counts.
