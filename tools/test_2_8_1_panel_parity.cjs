@@ -42,8 +42,13 @@ if (process.argv[2] === '--capture') {
                 assert(actual.hms.atlas?.trail.some(x => x.name === 'Buena Village'), 'Mushoku observed-place fallback lost its village');
                 actual.hms.atlas = null;
             }
+            // The demo's second mood reading omits Paul's earlier Wary standing.
+            const paul = expected.hms.relations.people.find(p => p.name === 'Paul Greyrat');
+            assert.equal(paul.standing, null);
+            Object.assign(paul, { standing: 'Wary', rank: 3, tone: 'neg' });
         }
         assert.deepEqual(actual, expected, `${sample.world}: existing 2.8.1 panels changed`);
     }
-    console.log('2.8.1 panel parity passed: every panel output in the four original demo worlds is preserved, with only the intended Mushoku calendar and observed-Atlas corrections.');
+    console.log('2.8.1 panel parity passed: all four original demo worlds preserved except the explicit Mushoku calendar, observed-Atlas and omitted-standing corrections.');
 }
+

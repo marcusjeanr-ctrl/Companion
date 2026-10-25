@@ -1,3 +1,11 @@
+## 2.8.20 — Accuracy and performance: targeted reconciliation fixes
+
+- Keep same-titled appointments distinct by participant, location and schedule during normalization and reconciliation, including manual entries. Apply partial updates only to an unambiguous match; retain explicit rescheduling and active-swipe rollback.
+- Carry established relationship standing, bond, age flag and numerical readings through omitted/null fields, both in the panel and the previous-standing prompt context. Explicit changes, false age flags, numerical zero and player pins still apply.
+- Preserve unknown relationship numbers as null. Reject booleans, arrays, objects, empty strings and non-finite values instead of coercing them to zero. Retain finite numbers, numeric strings and existing bounds.
+- Require the same secret owner before description matching. Preserve identical descriptions for different owners with separate edit keys; keep manual edits isolated and accept unambiguous legacy keys.
+- Add four regression groups that fail against 2.8.19 and pass after the fixes. All 13 suites and both bundle syntax checks pass. Five alternating benchmark pairs show a 600-message panel median of 51.81 ms versus 52.62 ms on 2.8.19. No added model calls, full-chat passes, polling, report-request fields or prompt instructions. See tools/VALIDATION_2_8_20.md for scope and limits.
+
 ## 2.8.19 — Visual HUD and rank parsing repairs
 
 - Split magic schools and sword styles on top-level middots, commas and semicolons. Preserve ranks, unknown ranks, parenthetical qualifiers and Shown/True distinctions. Fix the empty eligible-spell filter caused by a combined school name.
@@ -889,3 +897,4 @@ extension does the math and the remembering.
 - 1.0.0: HMS Edition. Reads the WORLD STATE HUD instead of competing with it; HUD Guard
   with restore; pins; Move the world; fights and aftermaths on HMS rules; companion block
   for characters; automatic HMS detection with classic fallback.
+

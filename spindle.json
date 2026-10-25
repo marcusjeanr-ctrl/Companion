@@ -1,6 +1,6 @@
 {
-  "version": "2.8.19",
-  "name": "RPG Companion HMS Edition 2.8.19 — Visual HUD & Rank Parsing Fix",
+  "version": "2.8.20",
+  "name": "RPG Companion HMS Edition 2.8.20 — Tracking Reconciliation Fixes",
   "identifier": "rpg_companion_hms",
   "author": "TenderTriper (Perch) — HMS Edition. Based on RPG Companion by Marinara. Minds, agendas, who knows what, Chekhov’s gun and building maps from FrankenSIM by Wireless (Ryah); TFDY by Pyropia.",
   "github": "https://github.com/marcusjeanr-ctrl/Companion",
@@ -19,3 +19,4 @@
   "minimum_lumiverse_version": "1.2.0",
   "interceptorTimeoutMs": 20000
 }
+
