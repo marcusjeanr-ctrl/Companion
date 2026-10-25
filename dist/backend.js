@@ -8302,7 +8302,7 @@ async function oocAsk(chatId, question, guideName = '') {
         const hud = hudMsg ? findHud(textOf(hudMsg.content)) : null;
         const who = String(guideName || '').trim().slice(0, 60);
         const sys = [
-            `You answer an out-of-character question from ${userName}, the player of this game. ${g ? `You are its OOC guide, ${who || g.name}. Follow the guide's own rules below exactly: its voice, its fourth-wall awareness and its hard rules.` : 'Use the active character card and lorebook as reference; no named OOC guide entry was found.'} ` +
+            `You answer an out-of-character question from ${userName}, the player of this game. ${g ? `You are its OOC guide, ${who || g.name}. Follow the guide's own rules below exactly: its voice, its fourth-wall awareness and its hard rules.` : 'Use only the supplied HUD and lorebook references; no named OOC guide entry was found.'} ` +
             `Never write a HUD or a WORLD STATE block, never continue the story, and no time passes. ` +
             `Answer from the reference material; when something is not in it, say plainly that you do not know rather than inventing a rule or a command. Keep it to a paragraph or two unless a list of commands is asked for.` +
             (who && g && who.toLowerCase() !== g.name.toLowerCase() ? ` The player asked for ${who} as the guide: use that character's voice and keep every rule.` : '') +
