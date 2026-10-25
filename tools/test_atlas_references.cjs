@@ -1,0 +1,38 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { runtime, seed } = require('./test_panel_tracking.cjs');
+const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'six_sided_location_fixture.json'), 'utf8'));
+async function main() {
+    const rt = runtime(); seed(rt);
+    const book = 'six-sided';
+    const entries = Array.from({ length: fixture.total }, (_, i) => ({ id: String(i), world_book_id: book, key: ['reference ' + i], content: 'World reference ' + i }));
+    for (const { index, entry } of fixture.locations) entries[index] = { ...entry, world_book_id: book };
+    const offsets = [];
+    rt.ctx.spindle.world_books.entries = { async list(_id, options) { offsets.push(options.offset); return { data: entries.slice(options.offset, options.offset + options.limit), total: entries.length }; } };
+    rt.ctx.setLorePool('test', [entries[161]]);
+    const partial = rt.ctx.atlasFor('test', ['Central Continent', 'Asura Kingdom', 'Fittoa Region', 'House King Estate', 'Training Yard']);
+    assert(partial.nodes.size >= 5);
+    await rt.ctx.loreHydrateCatalog('test');
+    const atlas = rt.ctx.atlasFor('test', ['Central Continent', 'Asura Kingdom', 'Fittoa Region', 'House King Estate', 'Training Yard']);
+    const nodes = [...atlas.nodes.values()];
+    const find = name => nodes.find(node => rt.ctx.atlasNorm(node.name) === rt.ctx.atlasNorm(name));
+    for (const name of ['Central Continent', 'Asura Kingdom', 'Fittoa Region', 'Ars', 'Buena Village', 'Rikarisu', 'Begaritt Continent', 'Ranoa Magic Academy']) assert(find(name), 'Missing ' + name);
+    assert.equal(atlas.nodes.get(find('Asura Kingdom').parent).name, 'Central Continent');
+    assert.equal(atlas.nodes.get(find('Ars').parent).name, 'Asura Kingdom');
+    assert.equal(atlas.nodes.get(find('Buena Village').parent).name, 'Fittoa Region');
+    assert.equal(nodes.filter(node => node.name === 'Asura Kingdom').length, 1);
+    assert.equal(find('Ars').kind, 'Lorebook reference');
+    assert(find('Asura Kingdom').summary, 'Location description missing');
+    for (const name of ['Dungeon Masters Guild', 'Great Forest Guild', 'Zant Port Smuggling Ring', 'Chaos Breaker Servants', 'Begaritt Desert Sandstorms']) assert(!find(name), 'Non-location mapped: ' + name);
+    assert.deepEqual(offsets, [0, 200, 400, 600, 800, 1000, 1200, 1400]);
+    rt.ctx.setLorePool('test', [entries[161]]);
+    assert.equal(rt.ctx.atlasFor('test'), atlas, 'Partial activation discarded full reference map');
+    const unrelated = rt.ctx.atlasFor('other', ['Central Continent', 'Asura Kingdom'], 'rezero');
+    assert.equal(unrelated, null);
+    assert.equal(rt.ctx.atlasFor('test', null, 'rezero'), null, 'Mushoku reference parsing leaked into another world');
+    rt.ctx.setLorePool('test', [{ id: 'other', world_book_id: 'other-world', key: ['Other'], content: 'Other world' }]);
+    assert.equal(rt.ctx.atlasFor('test'), null, 'Previous book map survived source switch');
+    console.log(`Atlas reference tests passed: ${nodes.length} mapped nodes, full-book pagination, explicit parents, descriptions, no organization/weather nodes, cache reuse and world isolation.`);
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });

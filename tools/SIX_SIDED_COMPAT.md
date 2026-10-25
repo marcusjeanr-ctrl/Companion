@@ -1,4 +1,4 @@
-# Mushoku compatibility in HMS 2.8.11 candidate
+# Mushoku compatibility in HMS 2.8.13 candidate
 
 Install the extension ZIP in Lumiverse. The original cards remain readable. A separate Six_Sided_World_HMS_Compatible.json copy resolves conflicting generic-HUD and output-order instructions in the supplied Six-Sided card; its lorebook is unchanged. Living World, the start handler and Reporter preset are unchanged. HMS reads the active chat's WORLD STATE HUD and the attached lorebook; it does not have an independent authoritative world state.
 
@@ -55,3 +55,7 @@ Run all five suites: `test_six_sided_compat.cjs`, `test_panel_tracking.cjs`, `te
 ## 2.8.11 startup hotfix
 
 2.8.10 omitted the Saga arc list and could crash the populated panel render. 2.8.11 restores that payload field and guards the renderer against an incomplete list. Run `node tools/test_startup_and_render.cjs` in addition to the five data suites. This executes backend startup and frontend setup/render with actual backend payloads using a minimal DOM test harness; it covers both Mushoku HUDs and recovery from a missing arc list.
+
+## 2.8.13 Atlas prose references
+
+Atlas uses the complete reference catalog for Mushoku, rather than the activated subset. It reads Six-Sided entries categorized as geography/locations/landmarks/nations whose first sentence describes a place. It excludes organizations and weather, preserves summaries, and links only explicitly stated parents; unresolved places remain separate roots. This is a lorebook reference map plus observed HUD paths, not a visited-place or player-knowledge ledger. Run `node tools/test_atlas_references.cjs` for the supplied card geography fixture, eight-page hydration, duplicate handling, cache retention and world isolation.

@@ -1,3 +1,10 @@
+## 2.8.13 — read Six-Sided prose geography in Atlas
+
+- Build Mushoku Atlas references from the complete attached-book catalog, retaining them under partial activation and invalidating when the source books change.
+- Read explicitly categorized prose geography entries in addition to structured TIER/PATH entries. Exclude organizations and weather; deduplicate repeated locations and link parents only from explicit first-sentence containment. Locations without a supported parent remain roots.
+- Preserve location descriptions, distinguish lorebook references from HUD-observed locations, and keep the current HUD path. Reference availability does not establish player knowledge or visits.
+- Keep parsing gated to Mushoku and add a source-card geography fixture covering pagination, parents, duplicate names, partial activation, source changes and world isolation. No additional model calls.
+
 ## 2.8.12 — consistent Beginner spell labels
 
 - Display Elementary as Beginner in the Mushoku Magic panel's spell ranks, school headings, study rows, rank-up notices and requirements.

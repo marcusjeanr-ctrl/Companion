@@ -1031,6 +1031,7 @@ function loreNormEntry(e) {
     return {
         id: String(e.id || ''),
         comment: String(e.comment || '').trim(),
+        category: String(e.extensions?.category || e.category || '').trim(),
         content,
         key: Array.isArray(e.key || e.keys) ? (e.key || e.keys).map(String).filter(Boolean) : [],
         keysecondary: Array.isArray(e.keysecondary) ? e.keysecondary.map(String).filter(Boolean) : [],
@@ -2296,7 +2297,7 @@ async function pushState(chatId, snapshot = null) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.12-rc.1';
+const RPGC_VERSION = '2.8.13-rc.1';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -3897,16 +3898,77 @@ function atlasAddMushokuPath(atlas, segments, worldId = 'mushoku') {
     return changed;
 }
 
+function atlasMushokuReferences(entries) {
+    const places = new Map();
+    const title = value => String(value).replace(/^the\s+|^city of\s+/i, '').replace(/\s+city$/i, '').trim();
+    const placeType = /\b(?:continent|kingdom|nation|province|region|territory|territories|city|town|village|settlement|capital|port|forest|mountain|range|valley|desert|glacier|summit|crater|road|highway|labyrinth|dungeon|oasis|palace|castle|fortress|estate|campus|university|academy|cathedral|district|suburbs|structure|dock|sanctuary|wasteland)\b/i;
+    for (const entry of entries || []) {
+        if (entry.disabled === true || entry.enabled === false || !/Geography|Locations|Landmarks|Nations/i.test(entry.category || entry.extensions?.category || '')) continue;
+        const match = String(entry.content || '').match(/^\s*([^:\n\[\]]{2,80}):\s*([^\n]+)/);
+        if (!match) continue;
+        const first = match[2].split(/\.\s+/)[0];
+        if (!placeType.test(first) || /\b(?:guild|ring|servants|cult|sandstorms|currency|gangs)\b/i.test(match[1]) || /\b(?:organization|criminal network|familiars|weather anomalies)\b/i.test(first)) continue;
+        const name = title(match[1]), key = atlasNorm(name);
+        const row = { name, key, entries: [entry], first, parent: null };
+        const old = places.get(key);
+        if (old) old.entries.push(entry);
+        else places.set(key, row);
+    }
+    for (const row of [...places.values()]) for (const entry of row.entries) {
+        const first = String(entry.content).split(':').slice(1).join(':').split(/\.\s+|\n/)[0];
+        for (const match of first.matchAll(/\b(?:in|on|within|of)\s+(?:the\s+)?((?:Central|Demon|Millis|Milis|Begaritt|Heavenly|Heaven) Continent)\b/gi)) {
+            const name = match[1], key = atlasNorm(name);
+            if (!places.has(key)) places.set(key, { name, key, first: '', parent: null,
+                entries: [{ id: entry.id, key: [name], content: `${name}: Referenced as a parent location in the lorebook.` }] });
+        }
+    }
+    const aliases = new Map();
+    for (const row of places.values()) for (const name of [row.name, ...row.entries.flatMap(e => e.key || e.keys || [])]) {
+        const key = atlasNorm(title(name));
+        if (!aliases.has(key)) aliases.set(key, row);
+        else if (aliases.get(key) !== row) aliases.set(key, null);
+    }
+    for (const row of places.values()) {
+        const candidates = [];
+        for (const entry of row.entries) {
+            const first = String(entry.content).split(':').slice(1).join(':').split(/\.\s+|\n/)[0];
+            const normalized = atlasNorm(first);
+            for (const [alias, parent] of aliases) {
+                if (!parent || parent === row) continue;
+                const at = normalized.indexOf(alias);
+                if (at < 0 || /[\p{L}\p{N}]/u.test(normalized[at - 1] || '') || /[\p{L}\p{N}]/u.test(normalized[at + alias.length] || '')) continue;
+                const before = normalized.slice(0, at);
+                if (!/\b(?:in|on|within|inside|at the edge of|capital of|capital city of)\s+(?:the\s+)?(?:[\p{L}-]+\s+){0,4}$/u.test(before)) continue;
+                candidates.push({ parent, length: alias.length });
+            }
+        }
+        candidates.sort((a, b) => b.length - a.length);
+        if (candidates.length) row.parent = candidates[0].parent;
+    }
+    const out = [];
+    for (const row of places.values()) {
+        const path = [], seen = new Set();
+        let current = row;
+        while (current && !seen.has(current.key)) { seen.add(current.key); path.unshift(current.name); current = current.parent; }
+        if (current) { path.splice(0, path.length, row.name); }
+        const entry = row.entries[0];
+        const description = String(entry.content).slice(String(entry.content).indexOf(':') + 1).trim();
+        out.push({ ...entry, content: `◆ TIER ${path.length - 1} — Lorebook reference\n◈ PATH: ${path.join(' → ')}\n\n## ${row.name}\n${description}` });
+    }
+    return out;
+}
+
 function atlasFor(chatId, segments = null, worldId = 'mushoku') {
-    const p = lorePool.get(chatId);
+    if (worldId === 'mushoku') loreQueueCatalog(chatId);
+    const p = worldId === 'mushoku' ? loreCatalogPool(chatId) : lorePool.get(chatId);
     const entries = p && Array.isArray(p.entries) ? p.entries : [];
     const c = atlasCache.get(chatId);
-    if (c && c.at === (p?.at ?? null) && c.n === entries.length && (c.atlas || !segments)) {
+    if (c && c.pool === p && c.worldId === worldId && (c.atlas || !segments)) {
         if (segments) atlasAddMushokuPath(c.atlas, segments, worldId);
         return c.atlas;
     }
     let atlas = null;
-    try { if (entries.length) atlas = atlasBuild(entries); } catch (e) { logW(`[RPG Companion HMS] Could not read the location book: ${e?.message || e}`); }
+    try { if (entries.length) atlas = atlasBuild(worldId === 'mushoku' ? entries.concat(atlasMushokuReferences(entries)) : entries); } catch (e) { logW(`[RPG Companion HMS] Could not read the location book: ${e?.message || e}`); }
     if (!atlas && segments) atlas = { nodes: new Map(), roots: [] };
     if (atlas) {
         atlas.baseVersion = `${p?.at ?? 'hud'}-${atlas.nodes.size}`;
@@ -3915,7 +3977,7 @@ function atlasFor(chatId, segments = null, worldId = 'mushoku') {
         if (segments) atlasAddMushokuPath(atlas, segments, worldId);
         if (!atlas.nodes.size) atlas = null;
     }
-    atlasCache.set(chatId, { at: p?.at ?? null, n: entries.length, atlas });
+    atlasCache.set(chatId, { pool: p, worldId, atlas });
     while (atlasCache.size > LORE_POOL_MAX_CHATS) atlasCache.delete(atlasCache.keys().next().value);
     return atlas;
 }
@@ -4177,7 +4239,7 @@ function posRequest(chat, st, userName) {
     json.push('"pos": [{"name": "…", "x": 0, "y": 0, "side": "you|ally|foe|other", "note": "a few words"}]');
     const last = posLatest(chat, key);
     let brief = null, bld = null;
-    if (!room && hud && hud.location && chatIdOf(chat)) { try { const at = atlasFor(chatIdOf(chat)); brief = at ? atlasRoomBrief(at, atlasLocate(at, hud.location)) : null; } catch { brief = null; } }
+    if (!room && hud && hud.location && chatIdOf(chat)) { try { const at = atlasFor(chatIdOf(chat), null, worldOf(worldLines(hud))); brief = at ? atlasRoomBrief(at, atlasLocate(at, hud.location)) : null; } catch { brief = null; } }
     if (!room) { try { bld = bldKnownNames(st, hud, chatIdOf(chat)); } catch { bld = null; } }
     let rules = room
         ? `The map: ${roomSummary(room)} (squares of about 1.5 m, x east, y south, from the north-west corner). Add "room" again only if ${userName} went somewhere else or the room itself changed (a wall broke, a table went over).`
@@ -4532,7 +4594,7 @@ function hmsBuildingsPanel(chatId, chat, st, fold = null, want = null) {
     const hud = tl.length ? tl[tl.length - 1].hud : null;
     if (!hud) return null;
     let atlas = null;
-    try { atlas = atlasFor(chatId); } catch { atlas = null; }
+    try { atlas = atlasFor(chatId, null, worldOf(worldLines(hud))); } catch { atlas = null; }
     const rooms = bldRooms(st, hud, atlas);
     if (rooms.length < 2) return null;
     const groups = new Map();
@@ -4575,7 +4637,7 @@ function hmsBuildingsPanel(chatId, chat, st, fold = null, want = null) {
 function bldKnownNames(st, hud, chatId) {
     if (!simCfg().buildings || !hud) return null;
     let atlas = null;
-    try { atlas = chatId ? atlasFor(chatId) : null; } catch { atlas = null; }
+    try { atlas = chatId ? atlasFor(chatId, null, worldOf(worldLines(hud))) : null; } catch { atlas = null; }
     const info = bldInfo(hud.location, atlas);
     if (!info) return null;
     const names = bldRooms(st, hud, atlas).filter(r => r.info.key === info.key && r.rkey !== posRoomKey(hud)).map(r => r.info.room);
@@ -4601,7 +4663,7 @@ spindle.registerMessageContentProcessor(async (ctx) => {
             const sp = await getStatesFor(ctx.chatId, ctx.messageId);
             if (sp) {
                 const cs = await getChatState(ctx.chatId);
-                let atlas = null; try { atlas = atlasFor(ctx.chatId); } catch { atlas = null; }
+                let atlas = null; try { atlas = atlasFor(ctx.chatId, null, worldOf(worldLines(hud))); } catch { atlas = null; }
                 const html = i18nHtml(statesPanelHtml(sp, parseHud(ctx.content), ctx.messageId, under, under.colours && isPlainObject(cs.dialogue) ? cs.dialogue.colours : null, cs.rooms, atlas));
                 if (html) out = out.replace(/\s+$/, '') + '\n\n' + html;
             }
