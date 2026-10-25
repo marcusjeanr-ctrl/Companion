@@ -1,3 +1,14 @@
+## 2.8.8 compatibility candidate — evidence checks and targeted correction
+
+- Save 2.8.7 as an installable rollback ZIP before editing; retain its immutable GitHub commit `0f8ba83b777bf246d613cf29a29d9d95ba2c061e`.
+- Validate each requested HMS panel and requested player-report fields before committing a new block. Check types, identity fields, numeric bounds, family kinship, NPC knowledge channels, scene-presence support and narrow explicit missed spell-learning statements.
+- Ask for short exact source quotes for new or changed factual records. Resolve reply/user aliases to the actual message and active swipe. Reject nonexistent quotations, attempts reported as learning, another caster's success, unsupported mastery, unaccepted goals and unexplained injury removals.
+- Preserve established history when a new reading is absent or unverified. Uncertain injury snapshots are withheld as a whole. Store accepted evidence and a bounded review audit alongside active-swipe metadata; show pending readings in the panel.
+- Make at most one focused correction request for failed fields, with a 45-second request timeout. No correction is made for a supported report, a stale target, an active RP generation, or Read again. The existing missing-block catch-up remains separate.
+- Apply the validator to both inline and separate HMS blocks. Classic tracker behavior and existing panel renderers remain intact. Add controls to disable validation or automatic correction independently.
+- Keep missing/null sanity unknown rather than converting it to zero. Extend the panel wait allowance for the optional correction and record validation/correction timing.
+- Pass the 2.8.1 output-parity fixture, Six-Sided compatibility suite, transport/panel integration suite and new safeguard tests. These are deterministic/local tests; exact quotation matching and conservative rules do not prove full semantic truth or guarantee perfect extraction in live Lumiverse.
+
 ## 2.8.7 compatibility candidate — faster panel reads and complete separate-mode maps
 
 - Share timeline, settings, spell history and canon-event reads within one synchronous panel/request pass. Reuse the exact-text HUD cache for Atlas and Minds; skip repeated insertion of observed Atlas paths. Edits and active swipes are reread on the next pass.

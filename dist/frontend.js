@@ -1124,7 +1124,7 @@ export function setup(ctx) {
         id: 'rpg-companion-hms',
         title: 'RPG Companion (HMS)',
         shortName: 'RPG',
-        headerTitle: 'RPG Companion HMS Edition 2.8.7 compatibility candidate',
+        headerTitle: 'RPG Companion HMS Edition 2.8.8 compatibility candidate',
         description: 'The side panel for HMS bots: the HUD as cards, people, quests, the map, fights, the Chronicle, and a guide',
         keywords: ['rpg', 'hms', 'tracker', 'hud', 'quests', 'dice', 'guide'],
         iconSvg: ICON_SVG
@@ -1313,6 +1313,7 @@ export function setup(ctx) {
             if (msg.newGame !== undefined) state.newGame = msg.newGame;
             if (msg.ooc !== undefined) state.ooc = msg.ooc;
             if (msg.world !== undefined) state.world = msg.world;
+            if (msg.trackingAudit !== undefined) state.trackingAudit = msg.trackingAudit;
             if (msg.plotView !== undefined) state.plotView = msg.plotView;
             if (msg.injuries !== undefined) state.injuries = msg.injuries;
             if (msg.hudSheet !== undefined) state.hudSheet = msg.hudSheet;
@@ -1374,7 +1375,8 @@ export function setup(ctx) {
     const pollTimer = setInterval(() => {
         syncChat();
         // If the backend never reports back, stop showing the busy state
-        const limit = ((state.settings?.trackerTimeoutSec || 180) + 30) * 1000;
+        const correctionAllowance = state.settings?.trackerSafeguards?.enabled !== false && state.settings?.trackerSafeguards?.repair !== false ? 45 : 0;
+        const limit = ((state.settings?.trackerTimeoutSec || 180) + 30 + correctionAllowance) * 1000;
         if (state.busy && state.busySince && Date.now() - state.busySince > limit) {
             state.busy = false;
             state.status = { kind: 'error', text: 'No answer from the tracker call. Check the Lumiverse console for [RPG Companion] messages.' };
@@ -1504,6 +1506,16 @@ export function setup(ctx) {
         const wrap = document.createDocumentFragment();
         wrap.appendChild(bar);
         wrap.appendChild(h('div', { class: 'rpgc-status ' + (st.kind || ''), role: 'status' }, st.text));
+        const pending = state.trackingAudit?.pending || [];
+        if (pending.length) {
+            const labels = {you:'You',family:'Family',gear:'Gear',holdings:'Holdings',money:'Money',factions:'Factions',secrets:'Secrets',contacts:'Contacts',objectives:'Objectives',agenda:'Agenda',injuries:'Injuries',learned:'NPC knowledge',plot:'Story',characters:'Present characters',party:'Party',relations:'People',quests:'Quests',room:'Map',pos:'Positions',minds:'Minds',agendas:'NPC agendas'};
+            wrap.appendChild(h('details', { class: 'rpgc-status warning' },
+                h('summary', {}, `Readings to verify (${pending.length})`),
+                h('p', { class: 'rpgc-note' }, 'These readings were not added. Confirmed history stays in place.'),
+                ...pending.slice(0, 12).map(item => h('p', { class: 'rpgc-note' },
+                    `${labels[String(item.path).split('.')[0]] || 'Tracker'}${item.key ? ': ' + item.key : ''} — ${item.reason}`))));
+        }
+
         return wrap;
     }
 
@@ -1855,6 +1867,8 @@ export function setup(ctx) {
             h('h4', null, 'Connection for side calls'),
             connectionPicker(s),
             h('h4', null, 'Separate tracker calls (Separate mode and Refresh)'),
+            toggle('Validate tracker readings', () => s.trackerSafeguards?.enabled !== false, v => { s.trackerSafeguards = { ...(s.trackerSafeguards || {}), enabled: v }; }, 'Check panel coverage and source evidence before saving new facts. Confirmed history is preserved when a reading is uncertain.'),
+            toggle('Correct uncertain readings automatically', () => s.trackerSafeguards?.repair !== false, v => { s.trackerSafeguards = { ...(s.trackerSafeguards || {}), repair: v }; }, 'At most one targeted correction per update, with a 45-second timeout. Read again remains local.'),
             toggle('Let the model think', () => s.trackerThinking, v => { s.trackerThinking = v; }, 'Off is much faster with reasoning models.'),
             h('div', { class: 'rpgc-row' }, h('span', { class: 'lbl' }, 'Give up after (s)'),
                 h('input', { type: 'number', min: '20', max: '1800', value: String(s.trackerTimeoutSec || 180), 'aria-label': 'Give up after (seconds)', onchange: (e) => { s.trackerTimeoutSec = Math.max(20, parseInt(e.target.value) || 180); saveSettings(); } })));
@@ -6239,7 +6253,7 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
             if (!popWin || popWin.closed) {
                 popWin = window.open('', 'rpgc_popout', 'width=460,height=860');
                 if (!popWin) { state.status = { kind: 'warning', text: 'The browser blocked the pop-out window. Allow pop-ups for Lumiverse and try again.' }; const s = S(); s.uiPanelMode = 'drawer'; return applyPanelMode(); }
-                popWin.document.title = 'RPG Companion HMS Edition 2.8.7 compatibility candidate';
+                popWin.document.title = 'RPG Companion HMS Edition 2.8.8 compatibility candidate';
                 syncPopoutLook(popWin);
                 try { if (!popLookObs) { popLookObs = new MutationObserver(() => syncPopoutLook(popWin)); popLookObs.observe(document.documentElement, { attributes: true }); if (document.body) popLookObs.observe(document.body, { attributes: true, attributeFilter: ['class'] }); } } catch { /* optional */ }
                 popWin.addEventListener('beforeunload', () => { popWin = null; if (panelMode() === 'popout') { const s = S(); s.uiPanelMode = 'drawer'; saveSettings(false); applyPanelMode(); render(); } });

@@ -1,4 +1,4 @@
-# Mushoku compatibility in HMS 2.8.7 candidate
+# Mushoku compatibility in HMS 2.8.8 candidate
 
 Install the extension ZIP in Lumiverse. The Six-Sided World card, Living World card, start handler, and Reporter preset do not need edits. HMS reads the active chat's WORLD STATE HUD and the attached lorebook; it does not have an independent authoritative world state.
 
@@ -69,3 +69,24 @@ Recorded warm medians in this workspace:
 These results show local work reduced by roughly one third versus 2.8.6. They cannot explain or promise to eliminate a 175-second provider wait. After installing, Refresh displays preparation, model/request and save times. The bug report adds `panelMs`, `loreMs`, `memoryMs`, `instructionMs` and total timing for diagnosis. `panelMs` measures backend payload construction, not network transport or browser rendering. Read again continues to reread locally without calling the model.
 
 The committed 2.8.1 fixture captures the original package’s four built-in demo worlds. The parity test compares every emitted HMS panel, Plot, Injuries and Chapters output against that baseline. The only allowed difference is the corrected absolute K-year clock in Mushoku Systems and Minds. No baseline panel is removed.
+
+## 2.8.8 safeguards
+
+Validation is enabled by default for newly processed HMS blocks in both Together and Separate modes. The scripted Demo test zone retains its supplied readings and makes no correction calls. Existing saved metadata is preserved; this does not rewrite older chats. The engine lives in `engines/tracker_safeguards.js`; run `python tools/embed_tracker_safeguards.py` after editing it to update the installable backend bundle.
+
+The request includes a small `evidence` array for new or changed factual records: family, gear, holdings, money, factions, secrets, contacts, player objectives, agenda, injuries, acquired NPC knowledge, spell progress/learning/mastery, carried-item changes and canon-event outcomes. Quotes are checked against the latest visible reply and its immediately preceding player turn. Accepted evidence is stored with actual message and swipe identifiers; it is not injected back into the narrative prompt as a second history system.
+
+Every requested top-level panel is checked for presence and shape. Requested player-report fields are checked individually. Null means unknown and cannot silently become zero sanity. Narrow local rules also reject invalid kinship and numeric values, missing NPC knowledge channels, unsupported scene presence, clearly failed spell attempts, another caster's success, and goals without a player choice. A narrow explicit player learning statement can trigger a correction when omitted. These rules reduce common errors; they do not detect every omission or establish semantic entailment merely because a quote matches.
+
+Only a failed validation can trigger one additional correction request, containing the affected fields and the current turn. It uses the configured tracker connection and thinking preference, with a 45-second request timeout and no retry loop. Normal supported updates use one tracker request. Read again stays local. Missing-block catch-up retains its existing behavior. Provider latency and extra quote output mean end-to-end speed must be measured in a live chat; the 2.8.7 local-panel percentage is not a guarantee for total 2.8.8 tracking time.
+
+Unresolved items are withheld, not promoted into confirmed facts. The panel's **Readings to verify** list names pending fields/items and why they were held. Existing fold/history rules keep established information; an uncertain injury snapshot is omitted so it cannot implicitly heal an old wound. Settings provide **Validate tracker readings** and **Correct uncertain readings automatically** independently. Diagnostics include the latest audit plus validation and correction timing.
+
+Additional checks:
+
+```sh
+python tools/embed_tracker_safeguards.py
+node tools/test_tracker_safeguards.cjs
+```
+
+Rollback: reinstall `HMS_Companion_2.8.7_Backup.zip`, or use commit `0f8ba83b777bf246d613cf29a29d9d95ba2c061e`. The metadata extension is additive, so 2.8.7 ignores the new audit fields. Facts already confirmed and saved by 2.8.8 remain part of the chat; installing the older extension does not rewind RP history.

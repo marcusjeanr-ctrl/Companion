@@ -72,7 +72,7 @@ const reading = {
 function seed(rt, living = false) {
     rt.messages.push({ id: 'u1', role: 'user', content: 'I practice Earth Spear.' },
         { id: 'a1', role: 'assistant', swipe_id: 0, content: hud('Training Yard', '07:15', living) });
-    rt.run(`settings.lore.enabled = false; settings.memory.inTracker = false;
+    rt.run(`settings.trackerSafeguards = {enabled:false}; settings.lore.enabled = false; settings.memory.inTracker = false;
         settings.positions.mode = 'always'; settings.generationMode = 'separate';
         const initialState = emptyChatState(); initialState.party.members = [{name:'Aurelius King',key:'aurelius king'}];
         chatStateCache.set('test', initialState); userNameCache.set('test', 'Marcus King');`);
