@@ -1,3 +1,8 @@
+## 2.8.12 — consistent Beginner spell labels
+
+- Display Elementary as Beginner in the Mushoku Magic panel's spell ranks, school headings, study rows, rank-up notices and requirements.
+- Keep original lorebook text, stored ranks, rank matching, eligibility and tracking unchanged. Other worlds retain their labels.
+
 ## 2.8.11 hotfix — restore populated panel loading
 
 - Restore the Saga `arcs` array omitted by 2.8.10. The frontend requires it to render the world timeline; its absence threw during the populated panel render.

@@ -1124,7 +1124,7 @@ export function setup(ctx) {
         id: 'rpg-companion-hms',
         title: 'RPG Companion (HMS)',
         shortName: 'RPG',
-        headerTitle: 'RPG Companion HMS Edition 2.8.11 compatibility candidate',
+        headerTitle: 'RPG Companion HMS Edition 2.8.12 compatibility candidate',
         description: 'The side panel for HMS bots: the HUD as cards, people, quests, the map, fights, the Chronicle, and a guide',
         keywords: ['rpg', 'hms', 'tracker', 'hud', 'quests', 'dice', 'guide'],
         iconSvg: ICON_SVG
@@ -6053,6 +6053,7 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
     // The spell list: what the bot's lorebook describes, against the ranks your HUD shows.
     const SPELL_STATUS = { mastered: 'Mastered', known: 'Known', study: 'Studying', reach: 'Within reach', unranked: 'Rank unknown', open: 'In the lorebook', next: 'Next rank', locked: 'Locked', special: 'Special' };
     function renderSpellList(L) {
+        const rankLabel = (v) => state.world?.id === 'mushoku' ? String(v ?? '').replace(/\bElementary\b/gi, 'Beginner') : String(v ?? '');
         const raw = (v) => document.createTextNode(String(v ?? ''));
         const filter = state.spellFilter === 'all' ? 'all' : 'mine';
         const shown = (sp) => filter === 'all' || !['locked', 'special', 'unranked'].includes(sp.status);
@@ -6060,22 +6061,22 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
         const known = (sp, on) => send({ type: 'spell_known', chatId: state.chatId, name: sp.name, on });
         const out = [h('h4', null, TT('Spell list ({0} in the lorebook)', L.total))];
         const tags = [];
-        for (const sc of L.mine || []) tags.push(h('span', { class: 'rpgc-chip abil' }, raw(sc.name), sc.rank ? h('span', { class: 'lv' }, raw(' \u00B7 ' + sc.rank)) : null));
+        for (const sc of L.mine || []) tags.push(h('span', { class: 'rpgc-chip abil' }, raw(sc.name), sc.rank ? h('span', { class: 'lv' }, raw(' \u00B7 ' + rankLabel(sc.rank))) : null));
         if (L.voiceless) tags.push(h('span', { class: 'rpgc-chip rpgc-spell-tag', title: L.casting || null }, '\uD83E\uDD2B Voiceless casting'));
         if (tags.length) out.push(h('div', { class: 'rpgc-chips' }, tags));
         else out.push(h('p', { class: 'rpgc-note' }, 'The HUD shows no magic ranks, so nothing is judged in or out of reach: mark what you learn and what you study.'));
-        for (const n of L.news || []) out.push(h('p', { class: 'rpgc-spell-news' }, '\u2B06 ', raw(`${n.school}: ${n.from || '?'} \u2192 ${n.to || '?'}`),
+        for (const n of L.news || []) out.push(h('p', { class: 'rpgc-spell-news' }, '\u2B06 ', raw(`${n.school}: ${rankLabel(n.from || '?')} \u2192 ${rankLabel(n.to || '?')}`),
             n.opened.length ? [' \u2014 ', h('span', null, 'now within reach:'), ' ', raw(n.opened.join(', '))] : null));
         if (L.studying.length) {
             out.push(h('div', { class: 'rpgc-spell-study' }, h('h4', null, 'Studying'), L.studying.map(sp => h('div', { class: 'rpgc-spell-row study' + (sp.done ? ' done' : '') },
-                h('div', { class: 'head' }, h('b', null, raw(sp.name)), sp.school || sp.rank ? h('span', { class: 'rpgc-note' }, raw(' ' + [sp.school, sp.rank].filter(Boolean).join(' \u00B7 '))) : null,
+                h('div', { class: 'head' }, h('b', null, raw(sp.name)), sp.school || sp.rank ? h('span', { class: 'rpgc-note' }, raw(' ' + [sp.school, rankLabel(sp.rank)].filter(Boolean).join(' \u00B7 '))) : null,
                     sp.done ? h('span', { class: 'rpgc-chip rpgc-spell-st known' }, SW('spell', 'Learned')) : sp.progress !== null ? h('span', { class: 'rpgc-note' }, ` ${sp.progress}%`) : null,
                     h('span', { class: 'rpgc-spell-btns' },
                         sp.done ? null : h('button', { class: 'rpgc-mini', title: 'Mark it learned', onclick: () => known(sp, true) }, '\u2713'),
                         h('button', { class: 'rpgc-mini', title: sp.done ? 'Clear from this list' : 'Stop studying', onclick: () => study(sp, false) }, '\u2715'))),
                 !sp.done && sp.progress !== null ? levelBar(sp.progress, 'ok') : null,
                 sp.note ? h('p', { class: 'rpgc-note' }, raw(sp.note)) : null,
-                !sp.done && sp.why ? h('p', { class: 'rpgc-note' }, sp.why) : null))));
+                !sp.done && sp.why ? h('p', { class: 'rpgc-note' }, rankLabel(sp.why)) : null))));
         }
         const findBox = h('input', { class: 'rpgc-spell-find', type: 'search', placeholder: 'Find a spell', 'aria-label': 'Find a spell', value: state.spellFind || '' });
         const bar = h('div', { class: 'rpgc-row rpgc-spell-bar' },
@@ -6089,19 +6090,19 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
             if (!rows.length) continue;
             const counts = [g.known ? TT('{0} known', g.known) : null, g.study ? TT('{0} studying', g.study) : null, g.reach ? TT('{0} within reach', g.reach) : null, g.next ? TT('{0} next', g.next) : null, filter === 'all' && g.unranked ? TT('{0} rank unknown', g.unranked) : null].filter(Boolean).join(' \u00B7 ');
             const det = h('details', { class: 'rpgc-spells rpgc-spell-school' + (g.mine ? ' mine' : '') },
-                h('summary', null, h('b', null, raw(g.name)), g.rank ? h('span', { class: 'rpgc-note' }, raw(' \u2014 ' + g.rank)) : null, counts ? h('span', { class: 'rpgc-note' }, ' \u00B7 ' + counts) : null),
+                h('summary', null, h('b', null, raw(g.name)), g.rank ? h('span', { class: 'rpgc-note' }, raw(' \u2014 ' + rankLabel(g.rank))) : null, counts ? h('span', { class: 'rpgc-note' }, ' \u00B7 ' + counts) : null),
                 rows.map(sp => {
                     const row = h('div', { class: 'rpgc-spell-row ' + sp.status, 'data-find': (sp.name + ' ' + (sp.effect || '')).toLowerCase() },
                         h('div', { class: 'head' },
                             h('span', { class: 'nm' }, raw(sp.name)),
-                            sp.rank ? h('span', { class: 'rpgc-chip abil' }, raw(sp.rank)) : null,
-                            h('span', { class: 'rpgc-chip rpgc-spell-st ' + sp.status, title: sp.why || null }, SW('spell', SPELL_STATUS[sp.status] || sp.status)),
+                            sp.rank ? h('span', { class: 'rpgc-chip abil' }, raw(rankLabel(sp.rank))) : null,
+                            h('span', { class: 'rpgc-chip rpgc-spell-st ' + sp.status, title: sp.why ? rankLabel(sp.why) : null }, SW('spell', SPELL_STATUS[sp.status] || sp.status)),
                             h('span', { class: 'rpgc-spell-btns' },
                                 sp.status === 'known' || sp.status === 'mastered' ? h('button', { class: 'rpgc-mini', title: 'Not learned after all: take it off', onclick: () => known(sp, false) }, '\u2715')
                                     : [sp.status === 'study' ? h('button', { class: 'rpgc-mini', title: 'Stop studying', onclick: () => study(sp, false) }, '\uD83D\uDCD6\u2715')
                                         : h('button', { class: 'rpgc-mini', title: 'Study it: the story is reminded, and reports how it goes', onclick: () => study(sp, true) }, '\uD83D\uDCD6'),
                                     h('button', { class: 'rpgc-mini', title: 'Mark it learned', onclick: () => known(sp, true) }, '\u2713')])),
-                        sp.why && !['known', 'mastered'].includes(sp.status) ? h('p', { class: 'rpgc-note why' }, sp.why) : null,
+                        sp.why && !['known', 'mastered'].includes(sp.status) ? h('p', { class: 'rpgc-note why' }, rankLabel(sp.why)) : null,
                         sp.fan && !['known', 'mastered'].includes(sp.status) ? h('p', { class: 'rpgc-note why' }, 'Not canon: very rare') : null,
                         sp.effect ? h('p', { class: 'eff' }, raw(sp.effect)) : null,
                         sp.chant ? h('p', { class: 'chant' }, '\u201C', raw(sp.chant), '\u201D', L.voiceless ? h('span', { class: 'rpgc-note' }, ' (', 'you can skip it', ')') : null) : null,
@@ -6242,7 +6243,7 @@ body{background:${bs ? bs.backgroundColor : '#111'};color:${bs ? bs.color : '#dd
             if (!popWin || popWin.closed) {
                 popWin = window.open('', 'rpgc_popout', 'width=460,height=860');
                 if (!popWin) { state.status = { kind: 'warning', text: 'The browser blocked the pop-out window. Allow pop-ups for Lumiverse and try again.' }; const s = S(); s.uiPanelMode = 'drawer'; return applyPanelMode(); }
-                popWin.document.title = 'RPG Companion HMS Edition 2.8.11 compatibility candidate';
+                popWin.document.title = 'RPG Companion HMS Edition 2.8.12 compatibility candidate';
                 syncPopoutLook(popWin);
                 try { if (!popLookObs) { popLookObs = new MutationObserver(() => syncPopoutLook(popWin)); popLookObs.observe(document.documentElement, { attributes: true }); if (document.body) popLookObs.observe(document.body, { attributes: true, attributeFilter: ['class'] }); } } catch { /* optional */ }
                 popWin.addEventListener('beforeunload', () => { popWin = null; if (panelMode() === 'popout') { const s = S(); s.uiPanelMode = 'drawer'; saveSettings(false); applyPanelMode(); render(); } });

@@ -70,6 +70,7 @@ async function main() {
     for (const living of [false, true]) {
         const rt = runtime();
         seed(rt, living);
+        rt.ctx.setLorePool('test', [{ id: 'ice-blade', key: ['Ice Blade'], content: '[SPELL — Ice Blade]\nSchool: Water · Rank: Elementary\nEffect: Creates a sword made of ice.' }]);
         await rt.ctx.runSeparateUpdate('test');
         await rt.ctx.pushState('test');
         const payload = rt.events.filter(event => event.type === 'state').at(-1);
@@ -80,6 +81,13 @@ async function main() {
         assert.match(ui.text(), /World State/);
         assert.match(ui.text(), /Magic/);
         assert.match(ui.text(), /All 22 arcs/);
+        assert.match(ui.text(), /Ice Blade Beginner/);
+        const spell = payload.hms.magic.list.schools.flatMap(group => group.spells).find(row => row.name === 'Ice Blade');
+        assert.equal(spell.rank, 'Elementary', 'Display formatting must preserve stored/source rank');
+        assert.equal(spell.status, 'reach');
+        ui.receive({ ...payload, world: null });
+        assert.match(ui.text(), /Ice Blade Elementary/, 'Non-Mushoku labels must remain unchanged');
+        ui.receive(payload);
         const malformed = structuredClone(payload);
         delete malformed.world.saga.arcs;
         ui.receive(malformed);
