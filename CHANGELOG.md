@@ -1,3 +1,12 @@
+## 2.8.9 compatibility candidate — restore original reading and complete the Magic catalog
+
+- Restore the supplied 2.8.1 tracker request transport, refresh workflow, JSON repair, lock enforcement, per-swipe storage and missing-block catch-up. Remove 2.8.8 quote validation, holding/review UI, correction calls and their settings. Old saved safeguard settings no longer affect tracking. Read again remains local.
+- Retain Six-Sided HUD/calendar/rank/study/canon/Atlas compatibility, local read caches, and separate-mode room/position persistence. Keep the passive stale-reply check without adding model calls.
+- Fix world-book pagination: read beyond the first 200 entries and remove the 800-entry early cutoff. A dedicated background reference catalog hydrates the actual active books even when a partial spell catalog already exists. Tracker lore selection and budgets remain separate.
+- Keep the complete reference catalog when activation later supplies only a small subset of the same books. Invalidate it when the source book set changes; deduplicate concurrent loads and reuse cached references. Compare catalog source identity instead of millisecond timestamps.
+- Reproduce the supplied card's 1,432-entry ordering using 113 extracted spell entries. Check all enabled canonical spell headers and verify Ice Blade, Ice Smash and Rock Bullet retain their learned state under their own schools. Test eight API pages, cached refreshes, partial-activation survival and world isolation.
+- Pass both Mushoku compatibility tests, all-panel integration, original 2.8.1 demo-panel output parity and the new reading/Magic regressions. These checks do not measure live provider latency; no total-refresh speed percentage is claimed.
+
 ## 2.8.8 compatibility candidate — evidence checks and targeted correction
 
 - Save 2.8.7 as an installable rollback ZIP before editing; retain its immutable GitHub commit `0f8ba83b777bf246d613cf29a29d9d95ba2c061e`.

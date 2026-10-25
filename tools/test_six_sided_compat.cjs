@@ -6,7 +6,7 @@ const src = fs.readFileSync(path.join(__dirname, '../dist/backend.js'), 'utf8');
 const arcEntries = JSON.parse(fs.readFileSync(path.join(__dirname, 'six_sided_arc_fixture.json')));
 function section(from, to) { const a = src.indexOf(from), b = src.indexOf(to, a + from.length); assert(a >= 0 && b > a, from); return src.slice(a, b); }
 const code = [
- section('let activeReadPass =', 'const trackerTimings ='),
+ section('let activeReadPass =', 'async function pushState('),
  section('function messageHud(m)', 'function hmsTimeline(chat,'),
  'const hmsParseCache = new Map();',
  section('const HUD_HEAD_RE =', '/**\n * True when the HUD was replaced'),
@@ -58,6 +58,7 @@ const code = [
  'const SPELL_LADDER = {mt:["Beginner","Intermediate","Advanced"]};',
  'const spellRows = [{name:"Earth Wall",key:"earth wall",school:"Earth",parent:null,ladder:"mt",step:null,rank:null,kind:"normal",effect:"An earthen wall.",chant:null,fan:false},{name:"Earth Spear",key:"earth spear",school:"Earth",parent:null,ladder:"mt",step:1,rank:"Intermediate",kind:"normal",effect:null,chant:null,fan:false}];',
  'function spellCatalog() { return spellRows; }',
+ 'function loreQueueCatalog() {}',
  'const entries = [];',
  'function hmsClockTest(h) { return hmsClock(h); }',
 ].join('\n');

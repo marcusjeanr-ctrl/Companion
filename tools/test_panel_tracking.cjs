@@ -95,7 +95,7 @@ async function main() {
         const cs = await rt.ctx.getChatState('test');
         assert(cs.rooms[stored.posRoom], 'Room not kept for Buildings');
         const states = rt.events.filter(e => e.type === 'state');
-        assert.equal(states.length, 2, 'One local update before the call and one final update');
+        assert.equal(states.length, 3, 'Original 2.8.1 preparation, scene-read and final state updates');
         const state = states.at(-1);
         assert.equal(state.busy, false);
         assert.equal(state.world.id, 'mushoku');
@@ -103,9 +103,8 @@ async function main() {
             assert(state.hms[key], `Missing panel ${key}`);
         }
         assert(state.plotView.now);
-        assert(state.trackerTiming);
         assert.equal(rt.warnings.length, 0, rt.warnings.join('\n'));
-        assert(rt.events.some(e => e.type === 'tracker_status'));
+        assert(!rt.events.some(e => e.type === 'tracker_status'));
     }
     // A swipe/edit/deletion during a slow provider response must not write to the new reply.
     for (const change of ['swipe', 'edit', 'delete']) {
