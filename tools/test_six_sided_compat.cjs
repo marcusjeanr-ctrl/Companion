@@ -6,6 +6,8 @@ const src = fs.readFileSync(path.join(__dirname, '../dist/backend.js'), 'utf8');
 const arcEntries = JSON.parse(fs.readFileSync(path.join(__dirname, 'six_sided_arc_fixture.json')));
 function section(from, to) { const a = src.indexOf(from), b = src.indexOf(to, a + from.length); assert(a >= 0 && b > a, from); return src.slice(a, b); }
 const code = [
+ section('function reportSpeculative(row)', 'function simLearnedNormalize(list)'),
+ section('function pocketAcquisitionPending(value)', '/**\n * What the player carries'),
  section('function hmsSplitTop(str, sepRe)', 'function hmsNum(s)'),
  section('let activeReadPass =', 'async function pushState('),
  section('function messageHud(m)', 'function hmsTimeline(chat,'),
@@ -177,3 +179,4 @@ evalExpr('entries').push(...arcEntries);
 assert.equal(ctx.mtArcList('test').length,22);
 assert.equal(ctx.mtArcList('test').find(x=>x.no===3).year,417);
 console.log('Compatibility assertions passed: both HUDs, 30-day calendar, Atlas, automatic spell study and learning, family, saga ledger, objectives, gear, and 22 lorebook arcs.');
+

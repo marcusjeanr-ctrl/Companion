@@ -1,3 +1,13 @@
+## 2.8.21 — Tracking source integrity
+
+- Reject explicitly unaccepted equipment updates and pending acquisition descriptions. Distinguish offers and unopened gifts from completed transfers; retain accepted wrapped gifts, borrowed objects, storage and unequipping. Apply the pending-description guard to both current and legacy inventory readers.
+- Preserve unknown quest percentages as null instead of coercing them to zero. Omit explicitly rejected, suggested or speculative quest reports. Replace the forced numeric quest-progress placeholder with measured progress or null, and clarify that routine scene details do not create quests.
+- Omit unaccepted request/invitation/instruction classifications instead of silently turning them into meetings. Clarify that promises require player commitment and that scheduled external events remain events. Existing appointment identity and lifecycle handling are unchanged.
+- Reject explicitly speculative relationship rows and nested emotional changes; preserve supported interpretation and the 2.8.20 relationship merge rules. Clarify the existing extraction rules without adding requested output fields.
+- Identify a labelled HUD draft followed by a labelled scene plan and a final HUD, including a final header attached to the planning paragraph. Remove that explicit draft prefix before inline extraction and from the existing tracker-history transport. Tagged reasoning blocks cannot supply Companion records. Ordinary narration, quoted examples and explicit OOC corrections retain their prior treatment.
+- Add source-integrity regressions and a pipeline benchmark. All 14 regression suites and both syntax checks pass; nine targeted groups pass when the supplied export is included. Five alternating benchmark pairs show no measured regression: panel 53.56 → 53.28 ms, report parsing 0.4184 → 0.4021 ms, response processing 0.6041 → 0.5885 ms. The tested static request shrinks from 15,798 to 15,528 characters with identical requested field names.
+- No new AI/API calls, chat scans, polling, verification calls or save migration. No changes to the character card or Reporter preset. The printed planning and narrator-assigned player action originate in generation; unflagged semantic extraction mistakes remain model-dependent. See tools/VALIDATION_2_8_21.md for attribution and limits.
+
 ## 2.8.20 — Accuracy and performance: targeted reconciliation fixes
 
 - Keep same-titled appointments distinct by participant, location and schedule during normalization and reconciliation, including manual entries. Apply partial updates only to an unambiguous match; retain explicit rescheduling and active-swipe rollback.

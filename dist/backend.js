@@ -2341,7 +2341,7 @@ async function pushState(chatId, snapshot = null) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.8.20';
+const RPGC_VERSION = '2.8.21';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -4964,7 +4964,7 @@ async function runSeparateUpdate(chatId, targetId = null) {
         const history = chat.slice(0, targetIdx + 1).filter(m => m.role !== 'system' && (trackingMessageVisible(m) || m.id === target.id)).slice(-depth);
 
         const msgs = [{ role: 'system', content: system }];
-        for (const m of history) msgs.push({ role: m.role === 'user' ? 'user' : 'assistant', content: textOf(m.content) });
+        for (const m of history) msgs.push({ role: m.role === 'user' ? 'user' : 'assistant', content: m.role === 'user' ? textOf(m.content) : stripLeakedReasoning(stripThink(textOf(m.content))) });
 
         let instr = '</history>\n\nHere are the previous trackers in the roleplay that you should consider when responding:\n<previous>\n';
         const prev = {};
@@ -6639,6 +6639,20 @@ function findHudRaw(text) {
     while ((hm = re.exec(src)) !== null) { heads.push(hm); if (!hm[0].length) re.lastIndex++; }
     if (!heads.length) return null;
     const first = findHudAt(src, heads[0]);
+    // A labelled HUD draft followed by a labelled scene plan is not the story's state.
+    const draft = /(?:^|\n)[ \t]*(?:HUD (?:format check|header format check|build|draft|preview))[^\n]*:/i.test(src.slice(0, heads[0].index));
+    if (draft && /(?:^|\n)[ \t]*(?:Scene beats|Prose|Scene plan):/i.test(src.slice(first ? first.bodyEnd : heads[0].index))) {
+        const embedded = new RegExp(HUD_HEAD_RE.source.replace('^', ''), 'gim');
+        embedded.lastIndex = first ? first.bodyEnd : heads[0].index + heads[0][0].length;
+        let final = null;
+        while ((hm = embedded.exec(src)) !== null) {
+            const gap = src.slice(first ? first.bodyEnd : 0, hm.index);
+            if (!/(?:^|\n)[ \t]*(?:Scene beats|Prose|Scene plan):/i.test(gap)) continue;
+            const candidate = findHudAt(src, hm);
+            if (candidate && candidate.sepFound) { final = candidate; break; }
+        }
+        if (final) { final.draftPrefix = true; return final; }
+    }
     // An engine that catches its own violation issues "(OOC: Correction)" and renders again,
     // so one reply can carry a faulty HUD and then the corrected one. Take the corrected one —
     // but only on evidence of a correction, so a HUD-like line in prose cannot hijack the read.
@@ -9851,9 +9865,9 @@ function stripLeakedReasoning(text) {
         if (LEAK_MARK_RE.test(firstLine)) { dropped++; continue; }
         keptParas.push(para);
     }
-    if (!dropped) return text;
+    if (!dropped && !f.draftPrefix) return text;
     const kept = keptParas.join('\n\n').replace(/^\s+/, '');
-    return (src.slice(0, after) + kept).replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '');
+    return (src.slice(f.draftPrefix ? f.headStart : 0, after) + kept).replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '');
 }
 function stripCompanion(text) {
     if (!text) return text;
@@ -9869,6 +9883,7 @@ function stripCompanion(text) {
 function parseCompanion(text, roster = [], relSt = null, immSt = null) {
     const res = { characters: null, weather: null, you: null, party: null, fight: null, found: false };
     if (!text) return res;
+    text = stripThink(text);
     const m = String(text).match(COMPANION_RE);
     let obj = null;
     if (m) obj = repairJSON(m[1]);
@@ -9879,7 +9894,7 @@ function parseCompanion(text, roster = [], relSt = null, immSt = null) {
     }
     if (!obj) {
         // Fallback: a fenced JSON block carrying characters
-        const p = parseResponse(stripThink(text));
+        const p = parseResponse(text);
         if (p.characters || p.relations || p.party || p.contacts) obj = { characters: p.characters, relations: p.relations, party: p.party, contacts: p.contacts };
     }
     if (!obj) return res;
@@ -9897,7 +9912,7 @@ function parseCompanion(text, roster = [], relSt = null, immSt = null) {
             learned: Array.isArray(y.learned) ? y.learned.map(x => (typeof x === 'string' ? x : isPlainObject(x) ? x.name || x.spell : '')).filter(x => typeof x === 'string' && x.trim() && !/^(none|null|n\/a)$/i.test(x.trim())).map(x => x.trim().slice(0, 60)).slice(0, 6) : [],
             mastered: Array.isArray(y.mastered) ? y.mastered.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim().slice(0, 60)).slice(0, 6) : [],
             study: Array.isArray(y.study) ? y.study.filter(x => isPlainObject(x) && typeof (x.spell || x.name) === 'string' && (x.spell || x.name).trim()).map(x => { const n = x.progress === null || x.progress === undefined || x.progress === '' ? NaN : Number(x.progress); return { spell: String(x.spell || x.name).trim().slice(0, 60), progress: Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null, note: partyText(x.note, 80) }; }).slice(0, 8) : [],
-            got: pocketList(y.got), lost: pocketList(y.lost) };
+            got: pocketList(y.got, true), lost: pocketList(y.lost) };
         res.found = true;
     }
     if (Array.isArray(obj.party)) {
@@ -10171,7 +10186,7 @@ function buildCompanionInstructionRead(committed, userName, locks, st = null, ch
     if (momReq) parts.push(momReq.json);
     const injReq = injActive(chat) ? injRequest(userName) : null;
     if (injReq) parts.push(injReq.json);
-    if (wantQuests) parts.push('"quests": [{"name": "…", "objective": "current step", "progress": 0..100, "giver": "or null", "where": "or null", "deadline": "in-world time or null", "reward": "or null", "category": "main|side|personal|party"}]');
+    if (wantQuests) parts.push('"quests": [{"name": "…", "objective": "current step", "progress": "measured % or null", "giver": "or null", "where": "or null", "deadline": "in-world time or null", "reward": "or null", "category": "main|side|personal|party"}]');
     if (party) parts.push(party.json);
     const rel = relRequest(chat, userName, null, st);
     if (rel) parts.push(rel.json);
@@ -10218,9 +10233,9 @@ function buildCompanionInstructionRead(committed, userName, locks, st = null, ch
     if (fight) s += '\n' + fight.rules;
     if (posReq) s += '\n' + posReq.rules;
     if (wantSurvival) s += `\nIn "you", set a flag to true only if ${userName} actually did it in this reply's events: a proper sleep counts as slept; a short break or sitting down counts as rested; a real meal counts as ate. Set "mind" to ${userName}'s state of mind at the end of this reply, as one of the listed words.`;
-    if (yc.on) s += `\n"you" also holds ${userName}'s own state at the end of this reply: mood, ${wantSurvival ? '' : 'stress (L), '}sanity (100 steady, 0 broken)${askXp ? ', and xp earned in this reply for a real accomplishment (0 if none) with why' : ''}. "got" and "lost": physical things ${userName} was handed, picked up, gave away, used up or lost — in their own last message or on screen in this reply — that the HUD does not list (a handout, a key, a note, a booklet), a few words each; [] when nothing changed hands. A message, a notice or news is not a thing.`;
+    if (yc.on) s += `\n"you": ${userName}'s established mood, ${wantSurvival ? '' : 'stress (L), '}sanity (100 steady, 0 broken)${askXp ? ', xp for real accomplishments (0 otherwise), with why' : ''}. "got"/"lost": completed physical transfers in the player's last action or this reply, excluding HUD-listed items and news. Offered or nearby items are not acquired. Unopened or wrapped gifts require established acceptance or transfer. A proposal, plan or reaching gesture is not a completed action; [] if unchanged.`;
     if (magicSeen && tlNow.length && worldOf(worldLines(tlNow[tlNow.length - 1].hud)) === 'mushoku') s += `\nIn "you.study", report only a named spell ${userName} intentionally practiced or was taught in the player's last message or this reply; [] if no practice occurred. A demonstration by someone else, a spell list, or a failed combat attempt is not study. Never invent a progress percentage. In "you.learned" report only spells demonstrably learned, not merely attempted.`;
-    if (wantQuests) s += '\n"quests": details of quests active in the story, one entry each — details only; the story decides which quests exist.';
+    if (wantQuests) s += '\n"quests": established quests only, not routine scene details or unaccepted requests. Progress is an explicitly measured percentage or null; never estimate it from scene beats. Complete only after achievement.';
     if (plotReq) s += '\n' + plotReq.rules;
     if (momReq) s += '\n' + momReq.rules;
     if (injReq) s += '\n' + injReq.rules;
@@ -10277,7 +10292,7 @@ function botSidePanel(text) {
 async function hmsProcessContent(chatId, content, prevHud, generationType, committedBefore) {
     const st = await getChatState(chatId);
     const guard = { noHud: false, swapped: false, missing: [], restored: [], at: Date.now() };
-    let out = String(content || '');
+    let out = stripLeakedReasoning(stripThink(String(content || '')));
     let hud = parseHud(out);
     if (!hud) {
         if (generationType !== 'continue' && prevHud) guard.noHud = true;
@@ -10304,7 +10319,7 @@ async function hmsProcessContent(chatId, content, prevHud, generationType, commi
             comp.found = true;
         }
     } catch (e) { logW(`[RPG Companion HMS] The bot's side_panel block could not be read: ${e?.message || e}`); }
-    out = stripHiddenTags(stripCompanion(stripLeakedReasoning(out)));
+    out = stripHiddenTags(stripCompanion(out));
     const prevInfo = committedBefore?.infoBox || {};
     const infoBox = {
         location: hud && hud.location ? { value: hud.location.join(' → ') } : (prevInfo.location || undefined),
@@ -11996,7 +12011,7 @@ function relNormalize(list, cfg, st = null, classic = false) {
     const pins = relPins(st);
     const out = [];
     for (const e of list) {
-        if (!isPlainObject(e) || typeof e.name !== 'string' || !e.name.trim()) continue;
+        if (!isPlainObject(e) || typeof e.name !== 'string' || !e.name.trim() || reportSpeculative(e)) continue;
         const name = e.name.replace(/\s+/g, ' ').trim().slice(0, 60);
         const key = lockKey(name);
         if (out.some(x => x.key === key)) continue;
@@ -12405,6 +12420,7 @@ function gearCanon(key) {
 function gearState(v) {
     const s = String(v || '').toLowerCase().replace(/[_-]+/g, ' ').trim();
     if (!s) return null;
+    if (/\b(?:offered|presented|held out|proposed|planned|not (?:yet )?(?:taken|accepted|equipped|held|worn))\b/i.test(s)) return null;
     if (GEAR_STATES.includes(s)) return s;
     for (const [re, st] of GEAR_SYN) if (re.test(s)) return st;
     return null;
@@ -12415,7 +12431,8 @@ function gearNormalize(list) {
     if (!Array.isArray(list)) return null;
     const out = [];
     for (const e of list) {
-        if (!isPlainObject(e)) continue;
+        if (!isPlainObject(e) || e.accepted === false || reportSpeculative(e)) continue;
+        if (/\b(?:offered|presented|held out|proposed|planned|not (?:yet )?(?:taken|accepted))\b/i.test(String(e.state ?? e.status ?? e.how ?? ''))) continue;
         const name = gearBare(partyText(e.item ?? e.name ?? e.object, 60) || '');
         if (!name) continue;
         const key = lockKey(name);
@@ -12518,7 +12535,7 @@ function gearRead(chat, st, cfg) {
         const at = e ? e.clock : null;
         const idx = idxOf.has(m.id) ? idxOf.get(m.id) : -1;
         const y = isPlainObject(d.survival) ? d.survival : {};
-        for (const n of Array.isArray(y.got) ? y.got : []) { if (pocketIsMessage(n)) continue; const it = ensure(n, 'story'); if (it && (!it.state || it.state === 'gone')) apply(it, 'on body', null, null, at, m.id, idx); }
+        for (const n of Array.isArray(y.got) ? y.got : []) { if (pocketIsMessage(n) || pocketAcquisitionPending(n)) continue; const it = ensure(n, 'story'); if (it && (!it.state || it.state === 'gone')) apply(it, 'on body', null, null, at, m.id, idx); }
         for (const n of Array.isArray(y.lost) ? y.lost : []) { const it = find(n); if (it) apply(it, 'gone', null, null, at, m.id, idx); }
         for (const r of Array.isArray(d.gear) ? d.gear : []) {
             const it = ensure(r.name, 'story');
@@ -12587,7 +12604,7 @@ function gearRequest(chat, st, userName, cfg) {
     const gc = gearCfg(cfg);
     if (!gc.on || !gc.ask) return null;
     const json = `"gear": [{"item": "short name", "state": "${GEAR_STATES.join('|')}", "where": "where exactly, a few words, or null", "inside": "the bag, pouch or pocket it is in, or null"}]`;
-    let rules = `"gear": every change in how or where ${userName} carries a physical thing — from what ${userName} did in their own last message and from what happened in this reply: drawing or sheathing a weapon, putting on or taking off armour, clothes or a bag, putting something into a bag, pouch or pocket or taking it out, setting it down, leaving it somewhere, dropping it, handing it over, picking it up, using it up. "in hand" is held; "sheathed" is in its sheath, scabbard or holster; "on body" is slung, strapped or hung on ${userName} (back, belt, shoulder), with "where"; "in container" names the container in "inside"; "stowed" is left somewhere off ${userName}, with "where"; "gone" is given away, used up, lost or destroyed. An item merely nearby, owned by an NPC, or offered but not taken is not ${userName}'s gear. Damage by itself does not move or remove an item. Take what ${userName} says they do with their things as done, unless this reply shows it failed or was stopped. Name each item exactly as the HUD or the "Gear now" list spells it, so it stays one item. Only items whose state changed; [] when none. The HUD stays the record of what ${userName} owns; this only says how it is carried.`;
+    let rules = `"gear": established changes in how ${userName} carries possessions, from accepted player actions or narrated events. "in hand": held; "worn": clothing or armour; "sheathed": sheath or holster; "on body": slung or strapped, with "where"; "in container": name it in "inside"; "stowed": stored off-person; "dropped": set down; "gone": transferred away, consumed, lost or destroyed. Storage and unequipping preserve ownership. Offers, nearby items, NPC possessions and planned actions confer no possession. An unopened gift needs an actual accepted transfer. Don't assume narrator-assigned player decisions were authorized; report what is established, without inventing consent or undoing explicit physical facts. Keep HUD/Gear-now item names, report only changed items, [] otherwise. Damage alone never removes an item; HUD ownership stays authoritative.`;
     if (gc.tell && chat && st) {
         let now = [];
         try { now = gearRead(chat, st).items.filter(it => it.state && it.state !== 'gone'); } catch { now = []; }
@@ -12679,6 +12696,7 @@ function agendaNormalize(list) {
         const key = lockKey(what);
         if (!key) continue;
         const kind = String(e.kind || '').toLowerCase();
+        if (/^(?:request|instruction|invitation|expectation|proposal|suggestion)$/.test(kind) && e.accepted !== true) continue;
         const rawState = String(e.state || '').toLowerCase().replace(/[ -]+/g, '_');
         const state = ['started', 'active', 'underway'].includes(rawState) ? 'in_progress' : ['abandoned', 'canceled'].includes(rawState) ? 'cancelled' : rawState === 'moved' ? 'open' : rawState;
         if (e.accepted === false || reportSpeculative(e) || (state && !AGENDA_STATES.includes(state))) continue;
@@ -12806,7 +12824,7 @@ function agendaRequest(chat, st, userName, cfg) {
     const ac = agendaCfg(cfg);
     if (!ac.on || !ac.ask) return null;
     const json = `"agenda": [{"what": "what was agreed or set, a few words", "with": "who, or null", "where": "where, or null", "when": "when, as the story says it", "due": "that moment in the HUD's own date and time format, or null", "kind": "${AGENDA_KINDS.join('|')}", "state": "${AGENDA_STATES.join('|')}"}]`;
-    let rules = `"agenda": appointments, promises and set times involving ${userName} — only agreed commitments, externally established deadlines or activities actually begun; omit suggestions and unaccepted invitations. Changes are made, started, kept, broken, moved or called off in ${userName}'s own last message or in this reply ("I'll meet you at the river tomorrow", "the exam is on Friday", "be back before dark"). One entry for each that changed, reusing the same "what" for one already listed; [] when nothing changed. "in_progress" once an ongoing activity actually starts; "kept" once it finishes or a one-off appointment is fulfilled, "missed" when its time passed without it, "cancelled" when called off. Report only — the story decides what the world does about it.`;
+    let rules = `"agenda": confirmed appointments, scheduled events, external deadlines or activities actually begun involving ${userName}. A promise requires explicit player commitment; NPC orders, requests, invitations and expectations alone are not promises. Omit unaccepted proposals; retain externally scheduled events as events. Preserve participants, place, timing and each existing "what". Report changed entries only, [] otherwise. "in_progress": actually begun; "kept": fulfilled, never merely planned; "missed": an unfulfilled appointment passed; "cancelled": called off. Rescheduling changes the time or place without inventing fulfillment. Report events, never decide them.`;
     if (ac.tell && chat && st) {
         let open = [];
         try { open = hmsAgendaPanel(chat, st).items.filter(x => x.state === 'open' || x.state === 'in_progress'); } catch { open = []; }
@@ -13695,7 +13713,7 @@ function simFiltersParse(v) {
 const simYes = (v) => v === true || /^(yes|true|y|paid)$/i.test(String(v ?? '').trim());
 
 function simTowardNormalize(t) {
-    if (!isPlainObject(t)) return null;
+    if (!isPlainObject(t) || reportSpeculative(t)) return null;
     const name = partyText(t.name ?? t.to ?? t.target, 60);
     if (!name) return null;
     const r = { name };
@@ -14423,7 +14441,7 @@ function simRequest(fold, userName, skip = new Set()) {
     const u = userName || 'the player';
     if (sc.on) {
         json.push(`"minds": [{"name": "…", "feel": "primary>secondary>tertiary", "level": "low|med|high", "at": "who it is aimed at", "tfdy": "T+1 D-1, or empty", "iw": 2, "facet": "the facet leading now", "mask": "held|cracking|off", "toward": [{"name": "you${sc.pairs === 'all' ? ', or someone present' : ''}", "moves": "philia+1 misos-1, or empty", "why": "what moved them", "gate": "up|down|same", "E": "open|sealed", "L": "open|sealed", "filters": "soc crack, val strain, or empty", "debt": "a wrong not made good, or null", "paid": false, "intent": "what they want from them", "mode": "${SIM_MODES.join('|')}"}]}]`);
-        let r = `"minds" (FrankenSIM's Aether): one entry per named character present, never ${u}, for what goes on inside them by the end of this reply. Report only established card traits and inner states explicitly shown in the story; do not invent motives from a gesture, a possible interpretation or an imagined off-screen event. Omit unsupported readings; this report never decides what they do. "feel" is their emotion named by where it leads, as a Parrott path (love|joy|surprise|anger|sadness|fear > secondary > tertiary); "at" is who it is aimed at. "tfdy": only what this reply changed in their ambient feeling, T tenderness, F fury, D dread, Y yearning, each by 1 at most, and only for something that happened. "iw": how warm they show themselves (0 frostbound, 1 cool, 2 temperate, 3 warm, 4 fervent); 2 unless there is a reason. "facet": the side of them that leads right now; "mask": whether the face they wear holds.`;
+        let r = `"minds" (FrankenSIM's Aether): one entry per named character present, never ${u}, for what goes on inside them by the end of this reply. Use established traits, observable behavior, dialogue and explicit private information; mark uncertainty by omitting unsupported changes. Teasing, disagreement or competition alone proves no envy, hostility or loss of trust. Never invent motives or an imagined off-screen event. "feel" is their emotion named by where it leads, as a Parrott path (love|joy|surprise|anger|sadness|fear > secondary > tertiary); "at" is who it is aimed at. "tfdy": only what this reply changed in their ambient feeling, T tenderness, F fury, D dread, Y yearning, each by 1 at most, and only for something that happened. "iw": how warm they show themselves (0 frostbound, 1 cool, 2 temperate, 3 warm, 4 fervent); 2 unless there is a reason. "facet": the side of them that leads right now; "mask": whether the face they wear holds.`;
         r += ` "toward": how they feel about ${u} ("you")${sc.pairs === 'all' ? ' and about anyone else present they deal with' : ''}. "moves": only the feelings this reply moved, each by ${sc.maxStep} at most: eros desire, ludus play, philia friendship, pragma partnership and reliance, storge belonging, agape selfless care, misos hate, eris strife, echthros enmity, stasis stuck and resisting, adiaphora indifference, phthonos envy. "gate" (dormant, attentive, aware, longing, open) moves one step at most, for an event, never for pressure. "E" and "L": whether the feeling shows in what they do and in what they say. "filters" hold the feeling back, soc (what others would think), val (their own values), comp (whether they fit), rel (ties they already have): "crack" loosens one, "strain" tightens it. "debt": a wrong done to them and not made good; it stays until "paid": true.`;
         r += ` Someone the minds state does not list yet also gets "temperament" (sanguine|choleric|melancholic|phlegmatic) and "facets" (5-7 words), from their card; a pair it does not list gets "start": all twelve feelings, 3-20, as their card and history put them. A minor, or family, never gets eros or a romantic mode.`;
         rules.push(r);
@@ -14819,9 +14837,21 @@ function pocketIsMessage(n) {
 }
 
 /** A "got"/"lost" list from the side-panel block: short names only. */
-function pocketList(v) {
+function pocketAcquisitionPending(value) {
+    if (isPlainObject(value)) {
+        if (value.accepted === false || reportSpeculative(value)) return true;
+        value = value.name || value.item || '';
+    }
+    const text = String(value || '');
+    if (/\b(?:not (?:yet )?(?:taken|accepted|received|acquired)|unaccepted|awaiting (?:acceptance|collection))\b/i.test(text)) return true;
+    if (/\b(?:accepted|received|acquired|picked up|took|taken|borrowed|carrying|in (?:your|my) hands?)\b/i.test(text)) return false;
+    return /\b(?:offered|presented|held out|proposed)\b/i.test(text) ||
+        (/\b(?:unopened|wrapped)\b/i.test(text) && /\b(?:gift|present|parcel|bundle)\b/i.test(text));
+}
+
+function pocketList(v, acquisition = false) {
     if (!Array.isArray(v)) return [];
-    return v.map(x => (typeof x === 'string' ? x : isPlainObject(x) ? x.name || x.item : '')).filter(x => typeof x === 'string' && x.trim())
+    return v.filter(x => !acquisition || !pocketAcquisitionPending(x)).map(x => (typeof x === 'string' ? x : isPlainObject(x) ? x.name || x.item : '')).filter(x => typeof x === 'string' && x.trim())
         .map(x => x.trim().replace(/\s+/g, ' ').slice(0, 60)).slice(0, 8);
 }
 
@@ -14840,7 +14870,7 @@ function pocketsNow(readings, st) {
     const ids = new Set((readings || []).map(r => r.msgId));
     for (const r of readings || []) {
         for (const n of r.lost || []) drop(n);
-        for (const n of r.got || []) { if (pocketIsMessage(n)) continue; const k = lockKey(n); if (![...items.keys()].some(key => same(key, k))) items.set(k, { name: n, from: 'story', msgId: r.msgId }); }
+        for (const n of r.got || []) { if (pocketIsMessage(n) || pocketAcquisitionPending(n)) continue; const k = lockKey(n); if (![...items.keys()].some(key => same(key, k))) items.set(k, { name: n, from: 'story', msgId: r.msgId }); }
         for (const x of removed) if (x.after === r.msgId) items.delete(x.key);
     }
     for (const n of Array.isArray(pk.added) ? pk.added : []) if (!items.has(lockKey(n))) items.set(lockKey(n), { name: n, from: 'you' });
@@ -15402,9 +15432,11 @@ function questNormalize(list) {
     if (!Array.isArray(list)) return null;
     const out = [];
     for (const q of list.slice(0, 12)) {
-        if (!isPlainObject(q) || typeof q.name !== 'string' || !q.name.trim()) continue;
+        if (!isPlainObject(q) || typeof q.name !== 'string' || !q.name.trim() || q.accepted === false || reportSpeculative(q)) continue;
+        if (/^(?:suggested|proposed|offered|unaccepted|intended)$/.test(String(q.state || '').toLowerCase())) continue;
         const cat = String(q.category || '').toLowerCase();
-        const pr = Number(q.progress);
+        const raw = q.progress;
+        const pr = typeof raw === 'number' || (typeof raw === 'string' && raw.trim()) ? Number(raw) : NaN;
         out.push({ key: lockKey(q.name), name: q.name.trim().slice(0, 80), objective: partyText(q.objective, 160), progress: Number.isFinite(pr) ? Math.max(0, Math.min(100, Math.round(pr))) : null,
             giver: partyText(q.giver, 60), where: partyText(q.where, 80), deadline: partyText(q.deadline, 60), reward: partyText(q.reward, 100),
             category: ['main', 'side', 'personal', 'party'].includes(cat) ? cat : null });
@@ -15613,7 +15645,7 @@ async function hmsCompanionCall(chatId, chat, target, committed, locks) {
     const compLore = loreCfg().inTracker ? await buildLoreBlock(chatId, { chat, sceneText: compScene, where: 'companion block' }) : '';
     const compMem = memCfg().inTracker ? await buildMemoryBlock(chatId, { queryText: compScene, where: 'companion block' }) : '';
     const msgs = [{ role: 'system', content: 'You read a roleplay and report who is present in the latest scene, for the player\'s side panel. You reply with the requested data block only.\n\n' + compLore + compMem }];
-    for (const m of history) msgs.push({ role: m.role === 'user' ? 'user' : 'assistant', content: stripCompanion(textOf(m.content)) });
+    for (const m of history) msgs.push({ role: m.role === 'user' ? 'user' : 'assistant', content: stripCompanion(m.role === 'user' ? textOf(m.content) : stripLeakedReasoning(stripThink(textOf(m.content)))) });
     const cst = await getChatState(chatId);
     const instr = buildCompanionInstruction(committed, userName, locks, immStView(cst, target.id), chat, true, { excludeId: target.id });
     msgs.push({ role: 'user', content: instr + '\n\nRespond with ONLY the <rpg_companion> block, nothing else.' });
