@@ -33,6 +33,16 @@ if (process.argv[2] === '--capture') {
     for (const sample of JSON.parse(fs.readFileSync(fixturePath, 'utf8')).samples) {
         const actual = panel(rt, sample);
         const expected = structuredClone(sample.expected);
+        // 2.9 adds a separate techniques panel; these old demos contain no technique catalog.
+        assert.equal(actual.hms.techniques, null);
+        delete actual.hms.techniques;
+        // This patch intentionally removes clock minutes previously guessed from dayparts.
+        for (const item of expected.hms.agenda?.items || []) {
+            if (item.when && rt.ctx.agendaClockPart(item.when) === null) {
+                item.dueIn = null;
+                if (item.state === 'open') item.status = 'unset';
+            }
+        }
         if (sample.world === 'mushoku') {
             // Compatibility corrects the old Living World HUD's missing absolute K-year clock.
             assert(actual.hms.systems.clock > expected.hms.systems.clock);

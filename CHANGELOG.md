@@ -1,5 +1,15 @@
 # Changelog — RPG Companion HMS Edition
 
+## 2.9.1 — Tracking integrity
+
+- Match renamed quests using an unambiguous objective, giver and location; remove prefix-only joins. Preserve other established quests and omitted fields across partial updates.
+- Deduplicate rephrased agenda descriptions and meal/bell variants while keeping different participants, places, dates and activities distinct. Preserve rescheduling and lifecycle updates.
+- Keep afternoon, sundown and other approximate schedules textual. Reject unsupported exact `due` clocks; retain later confirmed exact times and legitimate relative durations.
+- Preserve relationship bonds, standing and bars during mood-only updates. Unknown numbers stay unknown; explicit zero and false remain valid changes.
+- Isolate secrets by owner and withhold explicitly speculative relationship/knowledge updates. Restore pending-equipment guards while retaining accepted gifts, borrowed gear and storage.
+- Retain 2.9.0 sword-technique features, UI, preset, guides, translations and extension identity. Reuse existing bounded caches; no extra model calls, refresh triggers, full-chat verification scans or storage writes.
+- Pass 12 scoped regression suites, both syntax checks, the private-export replay and the predefined repeated performance threshold. Separate inherited Visual/Save compatibility gaps are documented in tools/TRACKING_AUDIT_2_9_1.md; they are not counted as passing.
+
 ## 2.9.0 beta
 - **Sword techniques**, a new card beside Magic: every sword technique the lorebook describes, by style and rank,
   against the HUD's `Sword Style:` / `Martial Style:` ranks: Known, Studying, Within reach, Next rank, Locked,

@@ -2340,7 +2340,7 @@ async function pushState(chatId, snapshot = null) {
 // Demo mode plays scripted turns (no tokens); Live mode asks the model, with a small
 // world narrator standing in for a bot card.
 
-const RPGC_VERSION = '2.9.0-beta';
+const RPGC_VERSION = '2.9.1';
 const diagLog = [];
 function diagPush(kind, m) { diagLog.push({ at: new Date().toISOString(), kind, text: String(m).slice(0, 400) }); if (diagLog.length > 60) diagLog.shift(); }
 function logW(m) { diagPush('warn', m); return spindle.log.warn(m); }
@@ -8872,6 +8872,8 @@ function worldLines(hud) { return hud ? hud.lines.map(l => String(l.text || '').
 /** Which of the four bots this HUD belongs to, or null. */
 function worldOf(lines) {
     const t = lines.join('\n');
+    const cache = activeReadPass ? memoRead(activeReadPass.chat, 'worldIdentity', () => new Map()) : null;
+    if (cache && cache.has(t)) return cache.get(t);
     const s = {
         rezero: 2 * /^(Deaths|Witch's Scent|Default Save Point|Save Point):/m.test(t) + /\[(AUTHORITY|SPIRIT CONTRACT|MENTAL COUNCIL)\b/i.test(t) + 2 * /World of Re:Zero/i.test(t) + /Lugunica|Now Playing: \[REEL:|Arc 0\s*[\u2014\u2013-]\s*Part/i.test(t) + /^Od Integrity:|^Magic: [^|]+\| Gate:/m.test(t),
         overlord: 2 * /\b(Overall Lvl|Racial Lvl|Job Lvl)\b/i.test(t) + /^Karma:/m.test(t) + /Super-Tier Slots:|Origin: (YGGDRASIL|New World)/i.test(t) + /Great Tomb of Nazarick|The New World \u2192/i.test(t),
@@ -8883,6 +8885,7 @@ function worldOf(lines) {
     };
     let best = null, top = 1;
     for (const [k, v] of Object.entries(s)) if (v > top) { best = k; top = v; }
+    if (cache && cache.size < 600) cache.set(t, best);
     return best;
 }
 
@@ -9784,15 +9787,15 @@ function parseCompanion(text, roster = [], relSt = null, immSt = null) {
     if (isPlainObject(obj.you)) {
         const y = obj.you;
         const mind = typeof y.mind === 'string' ? y.mind.trim().toLowerCase() : '';
-        const sn = y.sanity === null || y.sanity === undefined || y.sanity === '' ? NaN : Number(y.sanity), xp = Number(y.xp);
+        const sn = reportNumber(y.sanity), xp = Number(y.xp);
         res.you = { slept: y.slept === true, ate: y.ate === true, drank: y.drank === true, rested: y.rested === true, mind: HMS_MIND_SCALE.includes(mind) ? mind : null,
             mood: partyText(y.mood, 40), stress: partyLevel(y.stress), sanity: Number.isFinite(sn) ? Math.max(0, Math.min(100, Math.round(sn))) : null,
             xp: Number.isFinite(xp) && xp > 0 ? Math.min(100000, Math.round(xp)) : 0, xpWhy: partyText(y.xpWhy, 100),
             spells: Array.isArray(y.spells) ? y.spells.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim().slice(0, 60)).slice(0, 8) : [],
             learned: Array.isArray(y.learned) ? y.learned.map(x => (typeof x === 'string' ? x : isPlainObject(x) ? x.name || x.spell : '')).filter(x => typeof x === 'string' && x.trim() && !/^(none|null|n\/a)$/i.test(x.trim())).map(x => x.trim().slice(0, 60)).slice(0, 6) : [],
             mastered: Array.isArray(y.mastered) ? y.mastered.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim().slice(0, 60)).slice(0, 6) : [],
-            study: Array.isArray(y.study) ? y.study.filter(x => isPlainObject(x) && typeof (x.spell || x.name) === 'string' && (x.spell || x.name).trim()).map(x => { const n = x.progress === null || x.progress === undefined || x.progress === '' ? NaN : Number(x.progress); return { spell: String(x.spell || x.name).trim().slice(0, 60), progress: Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null, note: partyText(x.note, 80) }; }).slice(0, 8) : [],
-            got: pocketList(y.got), lost: pocketList(y.lost) };
+            study: Array.isArray(y.study) ? y.study.filter(x => isPlainObject(x) && typeof (x.spell || x.name) === 'string' && (x.spell || x.name).trim()).map(x => { const n = reportNumber(x.progress); return { spell: String(x.spell || x.name).trim().slice(0, 60), progress: Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : null, note: partyText(x.note, 80) }; }).slice(0, 8) : [],
+            got: pocketList(y.got, true), lost: pocketList(y.lost) };
         res.found = true;
     }
     if (Array.isArray(obj.party)) {
@@ -10066,7 +10069,7 @@ function buildCompanionInstructionRead(committed, userName, locks, st = null, ch
     if (momReq) parts.push(momReq.json);
     const injReq = injActive(chat) ? injRequest(userName) : null;
     if (injReq) parts.push(injReq.json);
-    if (wantQuests) parts.push('"quests": [{"name": "…", "objective": "current step", "progress": 0..100, "giver": "or null", "where": "or null", "deadline": "in-world time or null", "reward": "or null", "category": "main|side|personal|party"}]');
+    if (wantQuests) parts.push('"quests": [{"name": "…", "objective": "current step", "progress": "measured 0..100 or null", "giver": "or null", "where": "or null", "deadline": "in-world time or null", "reward": "or null", "category": "main|side|personal|party"}]');
     if (party) parts.push(party.json);
     const rel = relRequest(chat, userName, null, st);
     if (rel) parts.push(rel.json);
@@ -10115,7 +10118,7 @@ function buildCompanionInstructionRead(committed, userName, locks, st = null, ch
     if (wantSurvival) s += `\nIn "you", set a flag to true only if ${userName} actually did it in this reply's events: a proper sleep counts as slept; a short break or sitting down counts as rested; a real meal counts as ate. Set "mind" to ${userName}'s state of mind at the end of this reply, as one of the listed words.`;
     if (yc.on) s += `\n"you" also holds ${userName}'s own state at the end of this reply: mood, ${wantSurvival ? '' : 'stress (L), '}sanity (100 steady, 0 broken)${askXp ? ', and xp earned in this reply for a real accomplishment (0 if none) with why' : ''}. "got" and "lost": physical things ${userName} was handed, picked up, gave away, used up or lost — in their own last message or on screen in this reply — that the HUD does not list (a handout, a key, a note, a booklet), a few words each; [] when nothing changed hands. A message, a notice or news is not a thing.`;
     if (magicSeen && tlNow.length && worldOf(worldLines(tlNow[tlNow.length - 1].hud)) === 'mushoku') s += `\nIn "you.study", report only a named spell or sword technique ${userName} intentionally practiced or was taught in the player's last message or this reply; [] if no practice occurred. A demonstration by someone else, a spell list, or a failed combat attempt is not study. Never invent a progress percentage. In "you.learned" report only spells and sword techniques demonstrably learned, not merely attempted.`;
-    if (wantQuests) s += '\n"quests": details of quests active in the story, one entry each — details only; the story decides which quests exist.';
+    if (wantQuests) s += '\n"quests": accepted goals only; reuse existing names. Progress only if explicitly measured, else null. Omit suggestions; never equate introduction with completion.';
     if (plotReq) s += '\n' + plotReq.rules;
     if (momReq) s += '\n' + momReq.rules;
     if (injReq) s += '\n' + injReq.rules;
@@ -10490,12 +10493,12 @@ function hmsPanelStateRead(chatId, chat, st) {
                     // quest details from the story, joined to the quests the HUD lists
                     const det = questDetailsLatest(chat), now = systems.clock;
                     // the HUD writes "Name #1572188", the story block often just "Name": match without the code
-                    const find = (n) => { const k = questKey(n); return k ? det.find(d => { const dk = questKey(d.name || d.key); return dk && (dk === k || dk.startsWith(k) || k.startsWith(dk)); }) : null; };
+                    const find = (q) => { const matches = det.filter(d => questMatch(q, d)); return matches.length === 1 ? matches[0] : null; };
                     // a bare time ("08:40") is read from the clock of the reply that gave it, so a passed deadline shows overdue
                     const whenOf = (d) => hmsParseWhen(d.deadline, d.readAt !== null && d.readAt !== undefined ? d.readAt : now);
-                    const attach = (q) => { const d = find(q.name); if (!d) return q; const when = whenOf(d); return { ...q, ...d, name: q.name, dueIn: when !== null && now !== null ? when - now : null }; };
+                    const attach = (q) => { const d = find(q); if (!d) return q; const when = whenOf(d); return { ...q, ...d, name: q.name, dueIn: when !== null && now !== null ? when - now : null }; };
                     systems.quests = systems.quests.map(attach);
-                    for (const d of det) if (!systems.quests.some(q => { const k = questKey(q.name), dk = questKey(d.name || d.key); return k && dk && (k === dk || k.startsWith(dk) || dk.startsWith(k)); })) { const when = whenOf(d); systems.quests.push({ ...d, state: null, cls: 'active', fromStory: true, dueIn: when !== null && now !== null ? when - now : null }); }
+                    for (const d of det) if (!systems.quests.some(q => questMatch(q, d))) { const when = whenOf(d); systems.quests.push({ ...d, state: null, cls: 'active', fromStory: true, dueIn: when !== null && now !== null ? when - now : null }); }
                     systems.questFocus = st.questFocus || null;
                 }
             } catch (e) { logW(`[RPG Companion HMS] You/Magic read failed: ${e?.message || e}`); }
@@ -10531,7 +10534,12 @@ function hmsList(text) {
 }
 
 function hmsNorm(s) {
-    return String(s || '').replace(/^[^\p{L}\p{N}[]+/u, '').replace(/[:\s]+$/, '').trim().toLowerCase();
+    const text = String(s || '');
+    const cache = activeReadPass ? memoRead(activeReadPass.chat, 'normalizedLabels', () => new Map()) : null;
+    if (cache && cache.has(text)) return cache.get(text);
+    const result = text.replace(/^[^\p{L}\p{N}[]+/u, '').replace(/[:\s]+$/, '').trim().toLowerCase();
+    if (cache && cache.size < 512) cache.set(text, result);
+    return result;
 }
 
 /** Splits on a separator only where it sits outside (), [] and {}. */
@@ -10609,6 +10617,12 @@ function hmsMarkBlocks(lines) {
 
 /** In-world minutes from the HUD's own clock. Null when the HUD carries no time. */
 function hmsClock(hud) {
+    if (!activeReadPass || !hud) return hmsClockUncached(hud);
+    const clocks = memoRead(activeReadPass.chat, 'hudClocks', () => new WeakMap());
+    if (!clocks.has(hud)) clocks.set(hud, hmsClockUncached(hud));
+    return clocks.get(hud);
+}
+function hmsClockUncached(hud) {
     if (!hud) return null;
     const top = hud.lines.filter(l => !l.block).slice(0, 4).map(l => l.text).join(' | ');
     const tm = top.match(/\b(\d{1,2}):(\d{2})(?:\s*([AaPp])\.?[Mm]\.?)?/);
@@ -10985,6 +10999,15 @@ function hmsStateClass(state, states) {
 }
 
 function hmsReadQuests(hud, cfg) {
+    if (!activeReadPass || !hud) return hmsReadQuestsUncached(hud, cfg);
+    const cache = memoRead(activeReadPass.chat, 'questReads', () => new WeakMap());
+    const hit = cache.get(hud);
+    if (hit && hit.cfg === cfg) return hit.data;
+    const data = hmsReadQuestsUncached(hud, cfg);
+    cache.set(hud, { cfg, data });
+    return data;
+}
+function hmsReadQuestsUncached(hud, cfg) {
     const labels = hmsList(cfg.quests.labels);
     const states = hmsParseStates(cfg.quests.states);
     const quests = [];
@@ -11106,9 +11129,14 @@ const hmsSysTextCache = new Map();   // HUD text -> systems read from it (bounde
 function hmsReadSystems(hud, cfg) {
     if (!hud) return null;
     const c = cfg || hmsCfg();
+    const identity = hmsSysCache.get(hud);
+    if (identity && identity.ver === hmsCfgVer) return identity.sys;
     const textKey = hud.lines.map(l => l.text).join('\n');
-    const hit = hmsSysCache.get(hud) || hmsSysTextCache.get(textKey);
-    if (hit && hit.ver === hmsCfgVer) return hit.sys;
+    const hit = hmsSysTextCache.get(textKey);
+    if (hit && hit.ver === hmsCfgVer) {
+        hmsSysCache.set(hud, hit);
+        return hit.sys;
+    }
     const blocks = hmsMarkBlocks(hud.lines);
     const sys = {
         clock: hmsClock(hud),
@@ -11139,7 +11167,13 @@ function messageHud(m) {
     const key = `${m.id}:${m.swipe_id ?? 0}`;
     const hit = hmsParseCache.get(key);
     if (hit && hit.text === text) return hit.hud;
-    const hud = parseHud(text) || null;
+    const shared = activeReadPass ? memoRead(activeReadPass.chat, 'hudText', () => new Map()) : null;
+    let hud;
+    if (shared && shared.has(text)) hud = shared.get(text);
+    else {
+        hud = parseHud(text) || null;
+        if (shared && shared.size < 600) shared.set(text, hud);
+    }
     hmsParseCache.set(key, { text, hud });
     if (hmsParseCache.size > 3000) hmsParseCache.delete(hmsParseCache.keys().next().value);
     return hud;
@@ -11848,7 +11882,7 @@ function relPrevious(chat, st, rc) {
     const last = new Map();
     for (const m of msgs) {
         const d = getSwipeData(m);
-        if (d && Array.isArray(d.relations)) for (const r of d.relations) if (r && r.key) last.set(r.key, r);
+        if (d && Array.isArray(d.relations)) for (const r of d.relations) if (r && r.key) last.set(r.key, relReconcile(last.get(r.key), r, rc));
     }
     const pins = relPins(st);
     if (!last.size && !Object.keys(pins).length) return [];
@@ -11869,14 +11903,48 @@ function relRequest(chat, userName, cfg, st = null, classic = false) {
     const barFmt = rc.bars.map(b => `"${b.id}": ${b.two ? '-100..100' : '0..100'}`).join(', ');
     const json = `"relations": [{"name": "exact name", "standing": "${rc.ladder.join('|')}", "bond": "kind of relationship, their entry's words", "minor": false, "mood": "1-3 words"${barFmt ? ', ' + barFmt + ', "reasons": {"bar": "why it moved"}' : ''}, "why": "what changed, or null"}]`;
     let rules = `In "relations", add one entry for every named character in this scene who dealt with ${userName}, never ${userName}. `;
-    rules += `"standing" is closeness and regard only — how near ${userName} they feel, from enmity to devotion. It is never romance: devotion can be a child's, a sworn companion's, a friend's. `;
-    rules += `"bond" is the kind of relationship, taken from their own character entry and any contract (friend, family — parent and child, mentor, contracted spirit, rival, romantic partner…). Romantic only when their entry or the story established it. `;
-    rules += `Set "minor" to true for anyone who is, or appears to be, under 18. A minor is never given a romantic bond, and their desire is always 0; the same holds for every family bond. `;
-    if (rc.bars.length) rules += `The numbers are how they feel toward ${userName}: ${rc.bars.filter(b => b.two).map(b => b.name).join(', ') || 'none'} run from -100 to 100 with 0 neutral; ${rc.bars.filter(b => !b.two).map(b => b.name).join(', ') || 'none'} run from 0 to 100. Move each by at most ${rc.maxStep} in a reply, and only for something that happened in it. A first meeting starts where their own character entry puts them; neutral only if it says nothing. Report what the story shows — this block never changes how you write anyone. `;
+    rules += `"standing": closeness/regard, never romance; devotion can be familial, friendly or sworn. `;
+    rules += `"bond": established relationship/contract in the character entry's words. Romance requires explicit establishment. `;
+    rules += `"minor": true if under 18 or apparently so. Minors and family never receive romance or desire. `;
+    if (rc.bars.length) rules += `Bars toward ${userName}: ${rc.bars.filter(b => b.two).map(b => b.name).join(', ') || 'none'} use -100..100 (0 neutral); ${rc.bars.filter(b => !b.two).map(b => b.name).join(', ') || 'none'} use 0..100. Event-supported movement only, at most ${rc.maxStep}/reply. Start from the character entry; neutral only if unspecified. Teasing/competition alone proves no hostility, jealousy or motive. Keep unknown bars unknown. Report, never direct narration. `;
     const prev = relPrevious(chat || [], st, rc);
     const pins = relPins(st);
     if (prev.length) rules += `\nPrevious standing — ${prev.map(r => `${r.name}: ${[r.standing, r.bond ? `bond ${r.bond}${pins[r.key] && pins[r.key].bond ? ' (set by the player)' : ''}` : null, r.minor ? 'minor' : null, ...rc.bars.filter(b => r[b.id] !== null && r[b.id] !== undefined).map(b => `${b.id} ${r[b.id]}`)].filter(Boolean).join(', ')}`).join('. ')}.`;
     return { json, rules };
+}
+
+function reportNumber(value) {
+    if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return NaN;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : NaN;
+}
+
+function relReconcile(previous, reading, rc, pin = null) {
+    const out = { ...reading };
+    if (previous) {
+        for (const field of ['standing', 'bond', 'minor', 'mood', ...rc.bars.map(b => b.id)]) {
+            if (out[field] === null || out[field] === undefined) out[field] = previous[field] ?? null;
+        }
+    }
+    return relGuard(out, pin, rc);
+}
+
+function agendaItemKey(items, row) {
+    const title = lockKey(row.what);
+    const base = `${title} :: ${lockKey(row.with || '')} :: ${lockKey(row.where || '')} :: ${lockKey(row.when || row.due || '')}`;
+    let key = row.key || title;
+    for (let n = 1; items.some(x => x.key === key); n++) key = n === 1 ? base : `${base} :: ${n}`;
+    return key;
+}
+
+function secretOwnerKey(whose, mine = false, userName = null) {
+    const owner = partyText(whose, 60);
+    return mine || !owner || /^(user|you|me|player|\{\{user\}\})$/i.test(owner) || (userName && relSameWords(owner, userName))
+        ? 'user' : lockKey(owner);
+}
+
+function secretRecordKey(text, whose, mine = false, userName = null) {
+    return `${lockKey(text)} :: owner ${secretOwnerKey(whose, mine, userName)}`;
 }
 
 function relNormalize(list, cfg, st = null, classic = false) {
@@ -11885,15 +11953,15 @@ function relNormalize(list, cfg, st = null, classic = false) {
     const pins = relPins(st);
     const out = [];
     for (const e of list) {
-        if (!isPlainObject(e) || typeof e.name !== 'string' || !e.name.trim()) continue;
+        if (!isPlainObject(e) || typeof e.name !== 'string' || !e.name.trim() || reportSpeculative(e)) continue;
         const name = e.name.replace(/\s+/g, ' ').trim().slice(0, 60);
         const key = lockKey(name);
         if (out.some(x => x.key === key)) continue;
-        const r = { key, name, standing: null, bond: partyText(e.bond, 60), minor: e.minor === true, mood: partyText(e.mood, 40), why: partyText(e.why, 140), reasons: {} };
+        const r = { key, name, standing: null, bond: partyText(e.bond, 60), minor: typeof e.minor === 'boolean' ? e.minor : null, mood: partyText(e.mood, 40), why: partyText(e.why, 140), reasons: {} };
         const i = relRank(e.standing, rc);
         if (i !== null) r.standing = rc.ladder[i];
         for (const b of rc.bars) {
-            const v = Number(e[b.id]);
+            const v = reportNumber(e[b.id]);
             r[b.id] = Number.isFinite(v) ? Math.round(Math.max(b.two ? -100 : 0, Math.min(100, v))) : null;
         }
         if (isPlainObject(e.reasons)) for (const [k, v] of Object.entries(e.reasons)) {
@@ -11944,7 +12012,7 @@ function hmsRelationsPanel(chat, st, cfg, classic = false) {
             if (!r || !r.key) continue;
             let p = people.get(r.key);
             if (!p) { p = { key: r.key, name: r.name, firstAt: at, readings: [] }; people.set(r.key, p); }
-            p.readings.push({ ...relGuard(r, pins[r.key], rc), at, msgId: m.id });
+            p.readings.push({ ...relReconcile(p.readings[p.readings.length - 1], r, rc, pins[r.key]), at, msgId: m.id });
             p.name = r.name;
         }
     }
@@ -12283,9 +12351,28 @@ function gearCanon(key) {
 function gearState(v) {
     const s = String(v || '').toLowerCase().replace(/[_-]+/g, ' ').trim();
     if (!s) return null;
+    if (gearPendingState(s, true)) return null;
     if (GEAR_STATES.includes(s)) return s;
     for (const [re, st] of GEAR_SYN) if (re.test(s)) return st;
     return null;
+}
+
+function gearPendingState(value, includeUnequipped = false) {
+    const state = String(value ?? '');
+    return /\b(?:offered|presented|held out|proposed|planned|not (?:yet )?(?:taken|accepted))\b/i.test(state) ||
+        (includeUnequipped && /\bnot (?:yet )?(?:equipped|held|worn)\b/i.test(state));
+}
+
+function pocketAcquisitionPending(value) {
+    if (isPlainObject(value)) {
+        if (value.accepted === false || reportSpeculative(value)) return true;
+        value = value.name || value.item || '';
+    }
+    const text = String(value || '');
+    if (/\b(?:not (?:yet )?(?:taken|accepted|received|acquired)|unaccepted|awaiting (?:acceptance|collection))\b/i.test(text)) return true;
+    if (/\b(?:accepted|received|acquired|picked up|took|taken|borrowed|carrying|in (?:your|my) hands?)\b/i.test(text)) return false;
+    return /\b(?:offered|presented|held out|proposed)\b/i.test(text) ||
+        (/\b(?:unopened|wrapped)\b/i.test(text) && /\b(?:gift|present|parcel|bundle)\b/i.test(text));
 }
 
 function gearNormalize(list) {
@@ -12293,7 +12380,8 @@ function gearNormalize(list) {
     if (!Array.isArray(list)) return null;
     const out = [];
     for (const e of list) {
-        if (!isPlainObject(e)) continue;
+        if (!isPlainObject(e) || e.accepted === false || reportSpeculative(e)) continue;
+        if (gearPendingState(e.state ?? e.status ?? e.how)) continue;
         const name = gearBare(partyText(e.item ?? e.name ?? e.object, 60) || '');
         if (!name) continue;
         const key = lockKey(name);
@@ -12396,7 +12484,7 @@ function gearRead(chat, st, cfg) {
         const at = e ? e.clock : null;
         const idx = idxOf.has(m.id) ? idxOf.get(m.id) : -1;
         const y = isPlainObject(d.survival) ? d.survival : {};
-        for (const n of Array.isArray(y.got) ? y.got : []) { if (pocketIsMessage(n)) continue; const it = ensure(n, 'story'); if (it && (!it.state || it.state === 'gone')) apply(it, 'on body', null, null, at, m.id, idx); }
+        for (const n of Array.isArray(y.got) ? y.got : []) { if (pocketIsMessage(n) || pocketAcquisitionPending(n)) continue; const it = ensure(n, 'story'); if (it && (!it.state || it.state === 'gone')) apply(it, 'on body', null, null, at, m.id, idx); }
         for (const n of Array.isArray(y.lost) ? y.lost : []) { const it = find(n); if (it) apply(it, 'gone', null, null, at, m.id, idx); }
         for (const r of Array.isArray(d.gear) ? d.gear : []) {
             const it = ensure(r.name, 'story');
@@ -12464,8 +12552,8 @@ function gearLine(it) {
 function gearRequest(chat, st, userName, cfg) {
     const gc = gearCfg(cfg);
     if (!gc.on || !gc.ask) return null;
-    const json = `"gear": [{"item": "short name", "state": "${GEAR_STATES.join('|')}", "where": "where exactly, a few words, or null", "inside": "the bag, pouch or pocket it is in, or null"}]`;
-    let rules = `"gear": every change in how or where ${userName} carries a physical thing — from what ${userName} did in their own last message and from what happened in this reply: drawing or sheathing a weapon, putting on or taking off armour, clothes or a bag, putting something into a bag, pouch or pocket or taking it out, setting it down, leaving it somewhere, dropping it, handing it over, picking it up, using it up. "in hand" is held; "sheathed" is in its sheath, scabbard or holster; "on body" is slung, strapped or hung on ${userName} (back, belt, shoulder), with "where"; "in container" names the container in "inside"; "stowed" is left somewhere off ${userName}, with "where"; "gone" is given away, used up, lost or destroyed. An item merely nearby, owned by an NPC, or offered but not taken is not ${userName}'s gear. Damage by itself does not move or remove an item. Take what ${userName} says they do with their things as done, unless this reply shows it failed or was stopped. Name each item exactly as the HUD or the "Gear now" list spells it, so it stays one item. Only items whose state changed; [] when none. The HUD stays the record of what ${userName} owns; this only says how it is carried.`;
+    const json = `"gear": [{"item": "short name", "state": "${GEAR_STATES.join('|')}", "where": "location or null", "inside": "container or null"}]`;
+    let rules = `"gear": changed possession states from established player actions/narration. in hand=held; worn=clothing/armour; sheathed=sheath/holster; on body=slung/strapped with where; in container=inside names it; stowed=off-person storage; dropped=set down; gone=transferred away, consumed/lost/destroyed. Storage/unequipping retain ownership. Nearby/NPC-owned/offered items and plans confer none. Unopened gifts need accepted transfer. Do not infer consent from narrator-assigned decisions or undo explicit physical facts. Reuse HUD/Gear-now names. [] if unchanged; damage alone never removes gear. HUD ownership is authoritative.`;
     if (gc.tell && chat && st) {
         let now = [];
         try { now = gearRead(chat, st).items.filter(it => it.state && it.state !== 'gone'); } catch { now = []; }
@@ -12521,30 +12609,46 @@ function agendaCfg(cfg) {
 }
 
 /** When something falls due, in HUD-clock minutes: the HUD's own format first, then plain words ("tomorrow at dawn", "in three days"). */
-function agendaWhen(due, when, at, hud = null) {
-    for (const t of [due, when]) { if (!t) continue; try { const v = hmsParseWhen(t, at, hud); if (v !== null && v !== undefined && Number.isFinite(v)) return v; } catch { /* next */ } }
+function agendaScheduleDay(due, when, at, hud = null) {
     if (at === null || at === undefined) return null;
-    const t = String(when || due || '').toLowerCase();
-    if (!t) return null;
-    if (/^\s*(?:right now|now|immediately)\s*$/.test(t)) return at;
-    const dayStart = Math.floor(at / 1440) * 1440;
-    let part = null;
-    for (const [k, v] of Object.entries(AGENDA_DAYPART)) if (new RegExp(`\\b${k}\\b`).test(t)) { part = v; break; }
-    const hm = t.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|h\b|o'clock)/);
-    if (hm) { let hh = Number(hm[1]) % 12; if (hm[3] === 'pm') hh += 12; if (hm[3] !== 'am' && hm[3] !== 'pm') hh = Number(hm[1]) % 24; part = hh * 60 + Number(hm[2] || 0); }
-    const rel = t.match(/\bin\s+(?:about\s+)?(\d+|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|couple(?: of)?|few)\s+(minutes?|hours?|days?|weeks?|months?)\b/);
-    if (rel) {
-        const n = /^\d+$/.test(rel[1]) ? Number(rel[1]) : AGENDA_NUM[rel[1].split(' ')[0]] || 1;
-        const unit = rel[2].startsWith('minute') ? 1 : rel[2].startsWith('hour') ? 60 : rel[2].startsWith('day') ? 1440 : rel[2].startsWith('week') ? 10080 : 43200;
-        const base = at + n * unit;
-        return unit >= 1440 && part !== null ? Math.floor(base / 1440) * 1440 + part : base;
+    const text = String(due || when || '');
+    if (/\b(?:Day\s*:?\s*\d+|Month\s*\d+|Year\s*:|Armored Dragon Calendar)\b/i.test(text)) {
+        const parsed = hmsParseWhen(text, at, hud);
+        if (parsed !== null && Number.isFinite(parsed)) return Math.floor(parsed / 1440);
     }
-    if (/\bday after tomorrow\b/.test(t)) return dayStart + 2 * 1440 + (part ?? 12 * 60);
-    if (/\btomorrow\b/.test(t)) return dayStart + 1440 + (part ?? 12 * 60);
-    if (/\bnext week\b/.test(t)) return dayStart + 7 * 1440 + (part ?? 12 * 60);
-    if (/\b(today|tonight|this (?:morning|afternoon|evening))\b/.test(t) || part !== null) { const v = dayStart + (part ?? 21 * 60); return v < at - 60 && !/\btoday|tonight\b/.test(t) ? v + 1440 : v; }
-    if (/\bbefore (?:dark|nightfall|sundown)\b/.test(t)) { const v = dayStart + 18 * 60; return v < at ? v + 1440 : v; }
-    return null;
+    const t = String(when || '');
+    if (!t) return null;
+    return Math.floor(at / 1440) + (/\bday after tomorrow\b/i.test(t) ? 2 : /\btomorrow\b/i.test(t) ? 1 : /\bnext week\b/i.test(t) ? 7 : 0);
+}
+
+function agendaWhen(due, when, at, hud = null, source = null) {
+    if (/^\s*(?:right now|now|immediately)\s*$/i.test(when || due || '')) return at ?? null;
+    const relative = String(when || due || '').match(/^\s*in\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|an?)\s+(minutes?|hours?)\s*$/i);
+    if (relative && at !== null && at !== undefined) {
+        const n = /^\d+$/.test(relative[1]) ? Number(relative[1]) : AGENDA_NUM[relative[1].toLowerCase()];
+        return at + n * (/^hour/i.test(relative[2]) ? 60 : 1);
+    }
+    const wClock = agendaApproximate(when) ? null : agendaClockPart(when);
+    const dClock = agendaApproximate(due) ? null : agendaClockPart(due);
+    let clock = wClock ?? dClock;
+    if (clock === null || agendaApproximate(when)) return null;
+    // An extractor's precise `due` cannot silently replace an approximate story label.
+    if (source !== null && wClock === null && when) {
+        const text = String(source);
+        const candidates = [...text.matchAll(/\b\d{1,2}:\d{2}\s*(?:am|pm)?\b|\b\d{1,2}\s*(?:am|pm|o'clock)\b|\b(?:half past|quarter past|quarter to)\s+\w+\b/gi)];
+        if (!candidates.some(m => agendaClockPart(m[0]) === clock && !/(?:[~≈]|\b(?:about|around|approximately|roughly))\s*$/i.test(text.slice(Math.max(0, m.index - 24), m.index)))) return null;
+    } else if (when && wClock === null) return null;
+    const text = String(dClock === clock && due ? due : when || due || '');
+    if (at === null || at === undefined) return null;
+    const dayStart = Math.floor(at / 1440) * 1440;
+    const dayOffset = /\bday after tomorrow\b/i.test(text) ? 2 : /\btomorrow\b/i.test(text) ? 1 : /\bnext week\b/i.test(text) ? 7 : 0;
+    if (dayOffset) return dayStart + dayOffset * 1440 + clock;
+    const day = text.match(/\bDay\s*:?\s*(\d+)\b/i);
+    if (day && at < 300 * 360 * 1440 && !/\b(?:Year|Month|K\.?\d)/i.test(text)) return (Number(day[1]) - 1) * 1440 + clock;
+    const clockText = `${Math.floor(clock / 60)}:${String(clock % 60).padStart(2, '0')}`;
+    const explicit = text.replace(/\b\d{1,2}:\d{2}\s*(?:am|pm)?\b|\b\d{1,2}\s*(?:am|pm|o'clock|h)\b|\b(?:half past|quarter past|quarter to)\s+\w+\b/i, clockText);
+    const parsed = hmsParseWhen(explicit, at, hud);
+    return parsed !== null && Number.isFinite(parsed) ? parsed : dayStart + clock;
 }
 
 function agendaNormalize(list) {
@@ -12555,13 +12659,17 @@ function agendaNormalize(list) {
         const what = partyText(e.what ?? e.name ?? e.text, 90);
         if (!what) continue;
         const key = lockKey(what);
-        if (!key || out.some(x => x.key === key)) continue;
+        if (!key) continue;
         const kind = String(e.kind || '').toLowerCase();
+        if (/^(?:request|instruction|invitation|expectation|proposal|suggestion)$/.test(kind) && e.accepted !== true) continue;
         const rawState = String(e.state || '').toLowerCase().replace(/[ -]+/g, '_');
         const state = ['started', 'active', 'underway'].includes(rawState) ? 'in_progress' : ['abandoned', 'canceled'].includes(rawState) ? 'cancelled' : rawState === 'moved' ? 'open' : rawState;
         if (e.accepted === false || reportSpeculative(e) || (state && !AGENDA_STATES.includes(state))) continue;
-        out.push({ key, what, with: partyText(e.with ?? e.who, 60), where: partyText(e.where, 80), when: partyText(e.when, 60), due: partyText(e.due, 40),
-            kind: AGENDA_KINDS.includes(kind) ? kind : 'meeting', state: AGENDA_STATES.includes(state) ? state : state === 'moved' ? 'open' : 'open' });
+        const row = { key, what, with: partyText(e.with ?? e.who, 60), where: partyText(e.where, 80), when: partyText(e.when, 60), due: partyText(e.due, 40),
+            kind: AGENDA_KINDS.includes(kind) ? kind : 'meeting', state: AGENDA_STATES.includes(state) ? state : 'open' };
+        if (out.some(x => x.key === key && ['with', 'where', 'when', 'due'].every(f => lockKey(x[f] || '') === lockKey(row[f] || '')))) continue;
+        if (rawState === 'moved') row.moved = true;
+        out.push(row);
     }
     return out.length ? out.slice(0, 10) : null;
 }
@@ -12569,11 +12677,11 @@ function agendaNormalize(list) {
 /** "the exam" and "the written exam", "meet Sylphie" and "meet Sylphie at the river": one entry. */
 function agendaSame(a, b) {
     if (a === b) return true;
-    const w = (x) => new Set(x.split(/\s+/).filter(t => t.length > 2 && !['the', 'and', 'with', 'for', 'meet', 'see', 'at'].includes(t)));
-    const A = w(a), B = w(b);
+    const A = trackingWords(a), B = trackingWords(b);
     if (!A.size || !B.size) return false;
-    let n = 0; for (const t of A) if (B.has(t)) n++;
-    return n >= Math.min(A.size, B.size) && n >= 1 && (a.includes(b) || b.includes(a) || n >= 2);
+    let n = 0; for (const word of A) if (B.has(word)) n++;
+    // Never collapse two activities solely because one generic action word matches.
+    return n >= 2 && n === Math.min(A.size, B.size);
 }
 
 function agendaActivityState(item, data) {
@@ -12602,8 +12710,14 @@ function agendaRead(chat, st) {
     const lastId = msgs.length ? msgs[msgs.length - 1].id : null;
     const idxOf = new Map(chat.map((m, i) => [m.id, i]));
     const items = [];
-    const compatible = (x, row) => (!row?.with || !x.with || lockKey(row.with) === lockKey(x.with)) && (!row?.where || !x.where || lockKey(row.where) === lockKey(x.where));
-    const find = (key, row = null) => items.find(x => x.key === key && compatible(x, row)) || items.find(x => agendaSame(x.key, key) && compatible(x, row)) || null;
+    const compatible = (x, row, dueAt = null) => (!row?.with || !x.with || lockKey(row.with) === lockKey(x.with)) &&
+        (!row?.where || !x.where || row.moved || lockKey(row.where) === lockKey(x.where)) &&
+        (!row || agendaScheduleCompatible(x, row, dueAt));
+    const find = (key, row = null, dueAt = null) => {
+        if (!row) { const exact = items.find(x => x.key === key); if (exact) return exact; }
+        const matches = items.filter(x => (lockKey(x.what) === key || agendaSame(lockKey(x.what), key)) && compatible(x, row, dueAt));
+        return matches.length === 1 ? matches[0] : null;
+    };
     for (const m of msgs) {
         const d = getSwipeData(m) || {};
         const e = hudAt.get(m.id);
@@ -12611,13 +12725,17 @@ function agendaRead(chat, st) {
         const idx = idxOf.has(m.id) ? idxOf.get(m.id) : -1;
         for (const r of Array.isArray(d.agenda) ? d.agenda : []) {
             if (!r || typeof r.key !== 'string' || typeof r.what !== 'string') continue;
-            let it = find(r.key, r);
+            const dueAt = r.when || r.due ? agendaWhen(r.due, r.when, at, e && e.hud, stripThink(textOf(m.content)).replace(COMPANION_RE, '')) : null;
+            const scheduleDay = dueAt !== null ? Math.floor(dueAt / 1440) : agendaScheduleDay(r.due, r.when, at, e && e.hud);
+            let it = find(r.key, { ...r, scheduleDay }, dueAt);
             if (!it) {
-                const key = items.some(x => x.key === r.key) ? `${r.key} :: ${lockKey(r.with || '')} :: ${lockKey(r.where || '')}` : r.key;
+                if (!r.with && !r.where && !r.when && !r.due && items.some(x => agendaSame(lockKey(x.what), r.key))) continue;
+                const key = agendaItemKey(items, r);
                 it = { key, what: r.what, with: null, where: null, when: null, dueAt: null, kind: r.kind, state: 'open', madeAt: at, msgId: m.id, idx, from: 'story', changedIn: m.id, history: [] }; items.push(it); }
+            if (scheduleDay !== null) it.scheduleDay = scheduleDay;
             if (r.with) it.with = r.with;
             if (r.where) it.where = r.where;
-            if (r.when || r.due) { const v = agendaWhen(r.due, r.when, at, e && e.hud); if (r.when) it.when = r.when; if (v !== null) it.dueAt = v; else if (r.due) it.when = r.when || r.due; }
+            if (r.when || r.due) { if (r.when) it.when = r.when; if (dueAt !== null || r.moved) it.dueAt = dueAt; if (dueAt === null && r.due) it.when = r.when || r.due; }
             if (r.kind) it.kind = r.kind;
             if (r.state !== it.state) it.history.push({ from: it.state, to: r.state, at });
             it.state = r.state; it.idx = idx; it.changedIn = m.id;
@@ -12629,9 +12747,10 @@ function agendaRead(chat, st) {
     }
     for (const a of Array.isArray(g.added) ? g.added : []) {
         if (!a || !a.what) continue;
-        const key = lockKey(a.what);
-        if (find(key)) continue;
-        items.push({ key, what: a.what, with: a.with || null, where: a.where || null, when: a.when || null, dueAt: agendaWhen(null, a.when, a.at ?? now, tl.length ? tl[tl.length - 1].hud : null), kind: a.kind || 'promise', state: 'open', madeAt: a.at ?? null, msgId: null, idx: -1, from: 'you', changedIn: null, history: [] });
+        const dueAt = agendaWhen(null, a.when, a.at ?? now, tl.length ? tl[tl.length - 1].hud : null);
+        if (find(lockKey(a.what), a, dueAt)) continue;
+        const key = agendaItemKey(items, a);
+        items.push({ key, what: a.what, with: a.with || null, where: a.where || null, when: a.when || null, dueAt, kind: a.kind || 'promise', state: 'open', madeAt: a.at ?? null, msgId: null, idx: -1, from: 'you', changedIn: null, history: [] });
     }
     const edits = isPlainObject(g.edits) ? g.edits : {};
     for (const [k, ed] of Object.entries(edits)) {
@@ -12662,8 +12781,8 @@ function hmsAgendaPanel(chat, st, cfg) {
 function agendaRequest(chat, st, userName, cfg) {
     const ac = agendaCfg(cfg);
     if (!ac.on || !ac.ask) return null;
-    const json = `"agenda": [{"what": "what was agreed or set, a few words", "with": "who, or null", "where": "where, or null", "when": "when, as the story says it", "due": "that moment in the HUD's own date and time format, or null", "kind": "${AGENDA_KINDS.join('|')}", "state": "${AGENDA_STATES.join('|')}"}]`;
-    let rules = `"agenda": appointments, promises and set times involving ${userName} — only agreed commitments, externally established deadlines or activities actually begun; omit suggestions and unaccepted invitations. Changes are made, started, kept, broken, moved or called off in ${userName}'s own last message or in this reply ("I'll meet you at the river tomorrow", "the exam is on Friday", "be back before dark"). One entry for each that changed, reusing the same "what" for one already listed; [] when nothing changed. "in_progress" once an ongoing activity actually starts; "kept" once it finishes or a one-off appointment is fulfilled, "missed" when its time passed without it, "cancelled" when called off. Report only — the story decides what the world does about it.`;
+    const json = `"agenda": [{"what": "what was agreed or set, a few words", "with": "who, or null", "where": "where, or null", "when": "story wording; keep approximate times", "due": "confirmed exact HUD date/time or null", "kind": "${AGENDA_KINDS.join('|')}", "state": "${AGENDA_STATES.join('|')}"}]`;
+    let rules = `"agenda": appointments, promises and set times involving ${userName} — only agreed commitments, externally established deadlines or activities actually begun; omit suggestions and unaccepted invitations. Changes are made, started, kept, broken, moved or called off in ${userName}'s own last message or in this reply ("I'll meet you at the river tomorrow", "the exam is on Friday", "be back before dark"). One entry for each that changed, reusing the same "what" for one already listed; [] when nothing changed. "in_progress" once an ongoing activity actually starts; "kept" once it finishes or a one-off appointment is fulfilled, "missed" when its time passed without it, "cancelled" when called off. Keep vague times vague; never invent a clock. Report only.`;
     if (ac.tell && chat && st) {
         let open = [];
         try { open = hmsAgendaPanel(chat, st).items.filter(x => x.state === 'open' || x.state === 'in_progress'); } catch { open = []; }
@@ -12686,12 +12805,16 @@ async function hmsAgendaEdit(chatId, p) {
     if (p.op === 'add') {
         if (!what) return;
         const tl = hmsTimeline(chat);
-        if (!g.added.some(a => lockKey(a.what) === key)) g.added.push({ what, with: partyText(p.with, 60), where: partyText(p.where, 80), when: partyText(p.when, 60), kind: AGENDA_KINDS.includes(p.kind) ? p.kind : 'promise', at: tl.length ? tl[tl.length - 1].clock : null });
+        const row = { what, with: partyText(p.with, 60), where: partyText(p.where, 80), when: partyText(p.when, 60), kind: AGENDA_KINDS.includes(p.kind) ? p.kind : 'promise', at: tl.length ? tl[tl.length - 1].clock : null };
+        if (!g.added.some(a => lockKey(a.what) === key && ['with', 'where', 'when'].every(f => lockKey(a[f] || '') === lockKey(row[f] || '')))) {
+            row.key = agendaItemKey(g.added, { ...row, key: `manual :: ${key} :: ${lockKey(row.with || '')} :: ${lockKey(row.where || '')} :: ${lockKey(row.when || '')}` });
+            g.added.push(row);
+        }
         if (g.added.length > 60) g.added = g.added.slice(-60);
     } else if (p.op === 'set') {
         const s = String(p.state || '');
         if (![...AGENDA_STATES, 'removed'].includes(s)) return;
-        if (s === 'removed') g.added = g.added.filter(a => lockKey(a.what) !== key);
+        if (s === 'removed') g.added = g.added.filter(a => (a.key || lockKey(a.what)) !== key);
         g.edits[key] = { state: s, after: latest ? latest.id : null };
     }
     await saveChatState(chatId, st);
@@ -13186,12 +13309,12 @@ function secretNormalize(list, userName = null) {
     if (!Array.isArray(list)) return null;
     const out = [];
     for (const e of list) {
-        if (!isPlainObject(e)) continue;
+        if (!isPlainObject(e) || reportSpeculative(e) || /^(?:guess|guessed|gossip|rumou?r|inferred|suspected)$/i.test(String(e.how || ''))) continue;
         const text = partyText(e.secret ?? e.text ?? e.what, 140);
         if (!text) continue;
-        const key = lockKey(text);
-        if (!key || out.some(x => x.key === key)) continue;
         const whose = partyText(e.whose ?? e.owner, 60);
+        const key = secretRecordKey(text, whose, false, userName);
+        if (out.some(x => x.key === key)) continue;
         const kb = Array.isArray(e.known_by ?? e.knownBy) ? (e.known_by ?? e.knownBy) : typeof (e.known_by ?? e.knownBy) === 'string' ? String(e.known_by ?? e.knownBy).split(/,|\band\b/) : [];
         out.push({ key, text, whose: whose || 'user', mine: !whose || /^(user|you|me|player|\{\{user\}\})$/i.test(whose) || (userName && relSameWords(whose, userName)),
             knownBy: kb.map(x => partyText(x, 50)).filter(Boolean).slice(0, 10), how: partyText(e.how, 140) });
@@ -13207,12 +13330,23 @@ function secretRead(chat, st, userName = null) {
     const lastId = msgs.length ? msgs[msgs.length - 1].id : null;
     const list = [];
     const same = (a, b) => { if (a === b) return true; const w = (x) => new Set(x.split(/\s+/).filter(t => t.length > 3)); const A = w(a), B = w(b); let n = 0; for (const t of A) if (B.has(t)) n++; return n >= 3 && n >= Math.min(A.size, B.size) * 0.6; };
-    const ensure = (text, whose, mine, from) => { const k = lockKey(text); let it = list.find(x => same(x.key, k)); if (!it) { it = { key: k, text, whose, mine, knownBy: new Map(), from, changedIn: null }; list.push(it); } return it; };
+    const ensure = (text, whose, mine, from) => {
+        const descriptionKey = lockKey(text), ownerKey = secretOwnerKey(whose, mine, userName);
+        let it = list.find(x => x.ownerKey === ownerKey && same(x.descriptionKey, descriptionKey));
+        if (!it) {
+            const collision = list.find(x => x.descriptionKey === descriptionKey);
+            if (collision) collision.key = secretRecordKey(collision.text, collision.whose, collision.mine, userName);
+            it = { key: collision ? secretRecordKey(text, whose, mine, userName) : descriptionKey, descriptionKey, ownerKey, text, whose, mine, knownBy: new Map(), from, changedIn: null };
+            list.push(it);
+        }
+        return it;
+    };
     const isUser = (n) => !!n && (/^(user|you|me|player)$/i.test(n) || (userName && relSameWords(n, userName)));
     for (const m of msgs) {
         const d = getSwipeData(m) || {};
         const e = hudAt.get(m.id);
         for (const r of Array.isArray(d.secrets) ? d.secrets : []) {
+            if (!r || reportSpeculative(r) || /^(?:guess|guessed|gossip|rumou?r|inferred|suspected)$/i.test(String(r.how || ''))) continue;
             const it = ensure(r.text, r.whose, r.mine || isUser(r.whose), 'story');
             for (const n of Array.isArray(r.knownBy) && r.how ? r.knownBy : []) if (!isUser(n) && !it.knownBy.has(lockKey(n))) it.knownBy.set(lockKey(n), { name: n, how: r.how, at: e ? e.clock : null, msgId: m.id });
             it.changedIn = m.id;
@@ -13221,7 +13355,9 @@ function secretRead(chat, st, userName = null) {
     for (const a of Array.isArray(g.added) ? g.added : []) if (a && a.text) { const it = ensure(a.text, a.whose || 'user', a.whose ? false : true, 'you'); for (const n of a.knownBy || []) if (!it.knownBy.has(lockKey(n))) it.knownBy.set(lockKey(n), { name: n, how: 'set by you', at: null }); }
     const edits = isPlainObject(g.edits) ? g.edits : {};
     for (const [k, ed] of Object.entries(edits)) {
-        const it = list.find(x => x.key === k || same(x.key, k));
+        const exact = list.find(x => x.key === k);
+        const legacy = exact || k.includes(' :: owner ') ? [] : list.filter(x => same(x.descriptionKey, k));
+        const it = exact || (legacy.length === 1 ? legacy[0] : null);
         if (!it || !ed) continue;
         if (ed.removed) { it.removed = true; continue; }
         for (const n of ed.addKnows || []) if (!it.knownBy.has(lockKey(n))) it.knownBy.set(lockKey(n), { name: n, how: 'set by you', at: null });
@@ -13261,7 +13397,9 @@ async function hmsSecretsEdit(chatId, p) {
     const names = (v) => String(v || '').split(',').map(x => partyText(x, 50)).filter(Boolean).slice(0, 10);
     if (p.op === 'add') {
         if (!text) return;
-        if (!g.added.some(a => lockKey(a.text) === key)) g.added.push({ text, whose: partyText(p.whose, 60), knownBy: names(p.knownBy) });
+        const whose = partyText(p.whose, 60);
+        const recordKey = secretRecordKey(text, whose);
+        if (!g.added.some(a => secretRecordKey(a.text, a.whose) === recordKey)) g.added.push({ text, whose, knownBy: names(p.knownBy) });
         delete g.edits[key];
     } else if (p.op === 'knows') {
         const ed = g.edits[key] || (g.edits[key] = {});
@@ -13272,7 +13410,9 @@ async function hmsSecretsEdit(chatId, p) {
         ed.forget = [...new Set([...(ed.forget || []), ...names(p.name)])];
         ed.addKnows = (ed.addKnows || []).filter(n => !names(p.name).some(x => lockKey(x) === lockKey(n)));
     } else if (p.op === 'remove') {
-        g.added = g.added.filter(a => lockKey(a.text) !== key);
+        const exact = g.added.some(a => secretRecordKey(a.text, a.whose) === key);
+        const legacyCount = exact ? 0 : g.added.filter(a => lockKey(a.text) === key).length;
+        g.added = g.added.filter(a => exact ? secretRecordKey(a.text, a.whose) !== key : legacyCount !== 1 || lockKey(a.text) !== key);
         g.edits[key] = { removed: true };
     }
     await saveChatState(chatId, st);
@@ -13524,6 +13664,7 @@ function simFiltersParse(v) {
 const simYes = (v) => v === true || /^(yes|true|y|paid)$/i.test(String(v ?? '').trim());
 
 function simTowardNormalize(t) {
+    if (reportSpeculative(t)) return null;
     if (!isPlainObject(t)) return null;
     const name = partyText(t.name ?? t.to ?? t.target, 60);
     if (!name) return null;
@@ -13727,6 +13868,7 @@ function simKeyer(roster, you) {
     const fn = (name) => {
         let k = lockKey(String(name ?? '').replace(/\s+/g, ' '));
         if (!k) return null;
+        if (known.has(k)) return k;
         const member = partyMatch(roster, name);
         if (member) k = lockKey(member.key || member.name);
         else if (you.has(k)) return SIM_YOU;
@@ -14648,9 +14790,9 @@ function pocketIsMessage(n) {
 }
 
 /** A "got"/"lost" list from the side-panel block: short names only. */
-function pocketList(v) {
+function pocketList(v, acquisition = false) {
     if (!Array.isArray(v)) return [];
-    return v.map(x => (typeof x === 'string' ? x : isPlainObject(x) ? x.name || x.item : '')).filter(x => typeof x === 'string' && x.trim())
+    return v.filter(x => !acquisition || !pocketAcquisitionPending(x)).map(x => (typeof x === 'string' ? x : isPlainObject(x) ? x.name || x.item : '')).filter(x => typeof x === 'string' && x.trim())
         .map(x => x.trim().replace(/\s+/g, ' ').slice(0, 60)).slice(0, 8);
 }
 
@@ -14669,7 +14811,7 @@ function pocketsNow(readings, st) {
     const ids = new Set((readings || []).map(r => r.msgId));
     for (const r of readings || []) {
         for (const n of r.lost || []) drop(n);
-        for (const n of r.got || []) { if (pocketIsMessage(n)) continue; const k = lockKey(n); if (![...items.keys()].some(key => same(key, k))) items.set(k, { name: n, from: 'story', msgId: r.msgId }); }
+        for (const n of r.got || []) { if (pocketIsMessage(n) || pocketAcquisitionPending(n)) continue; const k = lockKey(n); if (![...items.keys()].some(key => same(key, k))) items.set(k, { name: n, from: 'story', msgId: r.msgId }); }
         for (const x of removed) if (x.after === r.msgId) items.delete(x.key);
     }
     for (const n of Array.isArray(pk.added) ? pk.added : []) if (!items.has(lockKey(n))) items.set(lockKey(n), { name: n, from: 'you' });
@@ -14966,7 +15108,7 @@ function spellEstablishedNames(message, playerName) {
     const names = /\bknown spells\b|\bspells you (?:already )?know\b|\byou (?:already )?know (?:these|the following) spells\b/i.test(text)
         ? spellEstablishedList(stripCompanion(stripLeakedReasoning(text)), playerName) : [];
     spellEstablishedCache.set(key, { text, names });
-    while (spellEstablishedCache.size > 600) spellEstablishedCache.delete(spellEstablishedCache.keys().next().value);
+    while (spellEstablishedCache.size > 3000) spellEstablishedCache.delete(spellEstablishedCache.keys().next().value);
     return names;
 }
 
@@ -15422,13 +15564,67 @@ function questKey(v) {
     return lockKey(String(v ?? '').replace(/\s*#\d{4,}\b/g, '').replace(/^[\s"'“”‘’\[(]+|[\s"'“”‘’\])]+$/g, '').replace(/\s+/g, ' '));
 }
 
+function trackingWords(value) {
+    const stop = new Set(['the', 'and', 'with', 'for', 'from', 'into', 'your', 'you', 'this', 'that', 'at', 'to', 'of', 'a', 'an']);
+    return new Set(lockKey(value || '').split(/[^\p{L}\p{N}]+/u).filter(w => w && !stop.has(w)).map(w =>
+        w.length > 5 ? w.replace(/ments?$/, '').replace(/ing$/, '').replace(/e$/, '') : w));
+}
+
+function questMatch(a, b) {
+    if (!a || !b) return false;
+    for (const field of ['giver', 'where']) if (a[field] && b[field] && !relSameWords(a[field], b[field])) return false;
+    const ak = questKey(a.name || a.key), bk = questKey(b.name || b.key);
+    if (ak && ak === bk) return true;
+    // Renaming needs the same explicit objective and at least one established contextual anchor.
+    const objective = questKey(a.objective);
+    return !!objective && objective === questKey(b.objective) && ['giver', 'where'].every(f => a[f] && b[f] && relSameWords(a[f], b[f]));
+}
+
+function agendaClockPart(text) {
+    const t = String(text || '').toLowerCase();
+    const numeric = t.match(/\b(\d{1,2}):(\d{2})\s*(am|pm)?\b|\b(\d{1,2})\s*(am|pm|o'clock|h)\b/);
+    if (numeric) {
+        let h = Number(numeric[1] ?? numeric[4]), m = Number(numeric[2] || 0), suffix = numeric[3] || numeric[5];
+        if (m > 59 || h > 23 || (/^(am|pm)$/.test(suffix || '') && (h < 1 || h > 12))) return null;
+        if (suffix === 'am' || suffix === 'pm') h = h % 12 + (suffix === 'pm' ? 12 : 0);
+        return h * 60 + m;
+    }
+    const numbers = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 };
+    const word = t.match(/\b(half past|quarter past|quarter to)\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/);
+    if (word) return (numbers[word[2]] - (word[1] === 'quarter to' ? 1 : 0)) * 60 + (word[1] === 'half past' ? 30 : word[1] === 'quarter to' ? 45 : 15);
+    if (/\bnoon\b/.test(t)) return 720;
+    if (/\bmidnight\b/.test(t)) return 0;
+    return null;
+}
+
+function agendaApproximate(text) {
+    return /[~≈]|\b(?:about|around|approximately|roughly|sometime|few|couple)\b/i.test(String(text || ''));
+}
+
+function agendaScheduleCompatible(a, b, dueAt) {
+    if (b.moved) return true;
+    if (a.scheduleDay !== null && a.scheduleDay !== undefined && b.scheduleDay !== null && b.scheduleDay !== undefined && a.scheduleDay !== b.scheduleDay) return false;
+    if (a.dueAt !== null && dueAt !== null) return a.dueAt === dueAt;
+    if (!a.when || (!b.when && !b.due)) return true;
+    const normalize = text => [...new Set(lockKey(text || '').replace(/\bmorning meal\b/g, 'breakfast')
+        .replace(/\b(?:half past|quarter past|quarter to)\s+\w+\b|\b\d{1,2}:\d{2}\s*(?:am|pm)?\b/g, '')
+        .replace(/\b(?:this|the|today|by|at)\b/g, '').split(/[^\p{L}\p{N}]+/u).filter(Boolean))].join(' ');
+    if (normalize(a.when) === normalize(b.when || b.due)) return true;
+    // A later explicit clock can refine a vague time; conflicting named days/dayparts remain separate.
+    const slots = text => String(text || '').match(/\b(?:tomorrow|morning|afternoon|evening|tonight|sundown|sunset|dawn)\b/gi) || [];
+    const A = slots(a.when).map(x => x.toLowerCase()), B = slots(b.when).map(x => x.toLowerCase());
+    if (A.join('|') !== B.join('|') && A.length && B.length) return false;
+    return (a.dueAt !== null || dueAt !== null) && (!A.length || !B.length);
+}
+
 function questNormalize(list) {
     if (!Array.isArray(list)) return null;
     const out = [];
     for (const q of list.slice(0, 12)) {
-        if (!isPlainObject(q) || typeof q.name !== 'string' || !q.name.trim()) continue;
+        if (!isPlainObject(q) || typeof q.name !== 'string' || !q.name.trim() || q.accepted === false || reportSpeculative(q)) continue;
+        if (/^(?:suggested|proposed|offered|unaccepted|intended)$/.test(String(q.state || '').toLowerCase())) continue;
         const cat = String(q.category || '').toLowerCase();
-        const pr = Number(q.progress);
+        const pr = reportNumber(q.progress);
         out.push({ key: lockKey(q.name), name: q.name.trim().slice(0, 80), objective: partyText(q.objective, 160), progress: Number.isFinite(pr) ? Math.max(0, Math.min(100, Math.round(pr))) : null,
             giver: partyText(q.giver, 60), where: partyText(q.where, 80), deadline: partyText(q.deadline, 60), reward: partyText(q.reward, 100),
             category: ['main', 'side', 'personal', 'party'].includes(cat) ? cat : null });
@@ -15473,11 +15669,25 @@ function hmsParseWhen(text, now, hud = null) {
 
 /** The latest quest details, each with the HUD clock of the reply that gave them: "08:40" said at 08:20 is that morning. */
 function questDetailsLatest(chat) {
-    for (const m of relReadings(chat).reverse()) {
-        const d = getSwipeData(m);
-        if (d && Array.isArray(d.quests) && d.quests.length) { const at = chapterMark(m).minutes; return d.quests.map(q => ({ ...q, readAt: Number.isFinite(at) ? at : null })); }
-    }
-    return [];
+    return memoRead(chat, 'quest-details', () => {
+        const rows = [];
+        for (const m of relReadings(chat)) {
+            const data = getSwipeData(m);
+            if (!Array.isArray(data?.quests) || !data.quests.length) continue;
+            for (const q of data.quests) {
+                if (!q || !q.name || reportSpeculative(q)) continue;
+                const exact = rows.filter(x => questKey(x.name) === questKey(q.name) && questMatch(x, q));
+                const candidates = exact.length ? exact : rows.filter(x => questMatch(x, q));
+                let row = candidates.length === 1 ? candidates[0] : null;
+                const deadlineChanged = !row || (q.deadline && q.deadline !== row.deadline);
+                if (!row) { row = { ...q }; rows.push(row); }
+                for (const [key, value] of Object.entries(q)) if (value !== null && value !== undefined && value !== '') row[key] = value;
+                // A deadline is anchored to the reply that actually supplied it, not a later partial report.
+                if (deadlineChanged || row.readAt === undefined) { const at = chapterMark(m).minutes; row.readAt = Number.isFinite(at) ? at : null; }
+            }
+        }
+        return rows;
+    }).map(q => ({ ...q }));
 }
 
 const DIFFICULTY = {

@@ -1125,7 +1125,7 @@ export function setup(ctx) {
         id: 'rpg-companion-hms',
         title: 'RPG Companion (HMS)',
         shortName: 'RPG',
-        headerTitle: 'RPG Companion HMS Edition 2.9 beta',
+        headerTitle: 'RPG Companion HMS Edition 2.9.1',
         description: 'The side panel for HMS bots: the HUD as cards, people, quests, the map, fights, the Chronicle, and a guide',
         keywords: ['rpg', 'hms', 'tracker', 'hud', 'quests', 'dice', 'guide'],
         iconSvg: ICON_SVG

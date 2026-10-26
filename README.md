@@ -1,4 +1,6 @@
-# RPG Companion HMS Edition 2.9 beta
+# RPG Companion HMS Edition 2.9.1
+
+> Tracking integrity update: quest continuity, agenda matching, approximate times, relationship preservation and owner-isolated secrets. [Audit and remaining limitations](tools/TRACKING_AUDIT_2_9_1.md) · [Performance measurements](tools/PERFORMANCE_2_9_1.md).
 
 The side panel for the **HMS Living World** bots: Re:Zero, Mushoku Tensei, Classroom of the Elite and
 Overlord (and Undertale, Dark Souls and Skyrim bots). In an HMS chat the bot's WORLD STATE HUD **is** the

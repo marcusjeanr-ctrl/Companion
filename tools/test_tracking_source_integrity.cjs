@@ -159,10 +159,12 @@ if (process.env.COMPANION_EXPORT) test('supplied export: final HUD, family, phys
 
 (async () => {
     let failed = 0;
-    for (const { name, run } of cases) {
+    const selected = process.env.COMPANION_TRACKING_ONLY === '1'
+        ? cases.filter(x => !/^(?:sources:|HUD safety:|supplied export:)/.test(x.name)) : cases;
+    for (const { name, run } of selected) {
         try { await run(); console.log(`PASS ${name}`); }
         catch (error) { failed++; console.error(`FAIL ${name}: ${error.message}`); }
     }
-    console.log(`Tracking source integrity: ${cases.length - failed}/${cases.length} groups passed.`);
+    console.log(`Tracking source integrity${process.env.COMPANION_TRACKING_ONLY === '1' ? ' (six tracking groups; legacy HUD/source groups excluded)' : ''}: ${selected.length - failed}/${selected.length} groups passed.`);
     if (failed) process.exitCode = 1;
 })();
