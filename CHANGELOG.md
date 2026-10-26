@@ -1,5 +1,12 @@
 # Changelog — RPG Companion HMS Edition
 
+## 2.9.2 — Quest objective identity
+
+- Recognize equivalent objective wording and renamed quests even when one reading omits its giver. Require shared context and reject conflicting actors or places.
+- Keep separate actions, destinations, quantities, negation and additional steps distinct. Preserve specific locations so a broad location cannot transitively merge two quests.
+- Retain bounded derived title aliases and deduplicate current HUD/story aliases without rewriting saved records. Keep conflicting completion classes separate.
+- Add seven quest-identity regression groups, including integrated HUD coverage. No added AI calls, prompt fields, storage writes or full-chat scans. See tools/QUEST_IDENTITY_2_9_2.md for scope and limits.
+
 ## 2.9.1 — Tracking integrity
 
 - Match renamed quests using an unambiguous objective, giver and location; remove prefix-only joins. Preserve other established quests and omitted fields across partial updates.

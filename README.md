@@ -1,4 +1,6 @@
-# RPG Companion HMS Edition 2.9.1
+# RPG Companion HMS Edition 2.9.2
+
+> **2.9.2:** [Conservative quest objective matching](tools/QUEST_IDENTITY_2_9_2.md) recognizes equivalent goals while retaining separate steps and story objectives.
 
 > Tracking integrity update: quest continuity, agenda matching, approximate times, relationship preservation and owner-isolated secrets. [Audit and remaining limitations](tools/TRACKING_AUDIT_2_9_1.md) · [Performance measurements](tools/PERFORMANCE_2_9_1.md).
 
