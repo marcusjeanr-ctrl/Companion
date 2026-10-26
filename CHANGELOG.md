@@ -1,5 +1,14 @@
 # Changelog — RPG Companion HMS Edition
 
+## 2.9.3 — Stored tracking accuracy
+
+- Preserve longer study notes, agenda titles and physical-item labels with bounded limits and visible word-boundary ellipses instead of silent mid-word cuts.
+- Keep borrowing permission out of automatic inventory while retaining physical permits, actual books, accepted transfers and manual data.
+- Guard scheduled meetings/events against premature in-progress reports before their exact start. Preserve supported early starts and work before deadlines.
+- Resolve trailing casting-method annotations to the same known spell without merging actual catalog variants. Prevent already-known practice from auto-starting study; preserve explicit learning/mastery completion and manual controls.
+- Reuse already resolved spell state and known maps. Frontend/UI behavior, tracker instructions, model-call count, refresh frequency and storage/history operations are unchanged. Historical cut-off text requires a normal manual Refresh; Read cannot reconstruct missing words.
+- Pass 14 scoped suites, both syntax checks, seven new tracking groups, the supplied export replay and the predefined repeated performance threshold. See tools/TRACKING_AUDIT_2_9_3.md.
+
 ## 2.9.2 — Quest objective identity
 
 - Recognize equivalent objective wording and renamed quests even when one reading omits its giver. Require shared context and reject conflicting actors or places.

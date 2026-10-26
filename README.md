@@ -1,4 +1,6 @@
-# RPG Companion HMS Edition 2.9.2
+# RPG Companion HMS Edition 2.9.3
+
+> **2.9.3:** [Stored text and tracking accuracy](tools/TRACKING_AUDIT_2_9_3.md): retain study descriptions, separate permissions from items, preserve scheduled-event timing, and reconcile casting-method spell aliases. Frontend and UI behavior are unchanged.
 
 > **2.9.2:** [Conservative quest objective matching](tools/QUEST_IDENTITY_2_9_2.md) recognizes equivalent goals while retaining separate steps and story objectives.
 
